@@ -42,3 +42,83 @@ def test_run_finished_rejects_unknown_status():
             status="bogus",  # not in Literal
             final_answer=None, error=None,
         )
+
+
+from multi_agent.schemas.events import (
+    AgentInvoked, AgentResponded,
+    LLMRequested, LLMResponded,
+    ToolCalled, ToolReturned,
+    MemoryRead, MemoryWritten,
+    SupervisorVerdict,
+)
+
+
+def _ts():
+    return datetime.now(timezone.utc)
+
+
+def test_agent_invoked_and_responded():
+    inv = AgentInvoked(
+        event_id="e1", run_id="r", timestamp=_ts(), parent_id=None,
+        agent_name="lawyer", role="primary_advisor",
+        input={"query": "hi"},
+    )
+    assert inv.event_type == "AgentInvoked"
+    assert inv.agent_name == "lawyer"
+
+    resp = AgentResponded(
+        event_id="e2", run_id="r", timestamp=_ts(), parent_id="e1",
+        agent_name="lawyer", output={"answer": "hello"}, duration_ms=1234,
+    )
+    assert resp.duration_ms == 1234
+
+
+def test_llm_request_response():
+    req = LLMRequested(
+        event_id="l1", run_id="r", timestamp=_ts(), parent_id="e1",
+        provider="stub", model="stub-1", messages=[{"role": "user", "content": "hi"}],
+        params={"temperature": 0},
+    )
+    resp = LLMResponded(
+        event_id="l2", run_id="r", timestamp=_ts(), parent_id="l1",
+        raw_response="ok", usage={"input_tokens": 5, "output_tokens": 1},
+        duration_ms=10, finish_reason="end_turn",
+    )
+    assert req.event_type == "LLMRequested"
+    assert resp.finish_reason == "end_turn"
+
+
+def test_tool_called_and_returned():
+    call = ToolCalled(
+        event_id="t1", run_id="r", timestamp=_ts(), parent_id="e1",
+        tool_name="search", args={"q": "x"}, agent_name="secretary",
+    )
+    ret = ToolReturned(
+        event_id="t2", run_id="r", timestamp=_ts(), parent_id="t1",
+        result={"hits": 3}, error=None, duration_ms=8,
+    )
+    assert call.tool_name == "search"
+    assert ret.error is None
+
+
+def test_memory_events():
+    rd = MemoryRead(
+        event_id="m1", run_id="r", timestamp=_ts(), parent_id=None,
+        target="sticky", query={"intent": "full"}, hits=[{"path": "x"}],
+        agent_name="lawyer",
+    )
+    wr = MemoryWritten(
+        event_id="m2", run_id="r", timestamp=_ts(), parent_id=None,
+        target="agent_notes", payload={"name": "n"}, path="agent_notes/n.md",
+        agent_name="supervisor",
+    )
+    assert rd.target == "sticky"
+    assert wr.path == "agent_notes/n.md"
+
+
+def test_supervisor_verdict():
+    v = SupervisorVerdict(
+        event_id="v1", run_id="r", timestamp=_ts(), parent_id=None,
+        verdict="pass", issues=[],
+    )
+    assert v.verdict == "pass"
