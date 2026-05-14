@@ -26,6 +26,9 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "expensive: tests that hit paid external APIs (Anthropic, OpenAI cloud)",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
