@@ -114,7 +114,8 @@ class _SpanCM:
         self.recorder.emit(start)
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type, exc, _tb):
+        del _tb  # protocol-required traceback param, intentionally unused
         duration_ms = int((monotonic() - self._t0) * 1000)
         if exc is not None:
             self._error = f"{exc_type.__name__}: {exc}"
