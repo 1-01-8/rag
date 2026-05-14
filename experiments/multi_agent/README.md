@@ -51,3 +51,21 @@ pkill -9 -f vllm
 ```
 
 The service uses GPU card 3 (~20 GB VRAM). See `/home/xxm/models/qwen3.5-9b/USAGE.md` for details.
+
+### Tool-calling enabled launcher
+
+The system script at `/home/xxm/models/qwen3.5-9b/serve_vllm.sh` does NOT enable
+tool calling. For multi_agent tests/agents that need to dispatch tools, use the
+project-local launcher which adds `--enable-auto-tool-choice` and
+`--tool-call-parser qwen3_xml` (the chat template uses Qwen3's XML-style
+`<tool_call><function=...>` format, not Hermes JSON):
+
+```bash
+# Stop the no-tools version if running
+pkill -9 -f vllm
+
+# Launch with tool calling
+PATH=/home/xxm/miniconda3/envs/qwen35/bin:$PATH \
+  nohup bash /home/xxm/rag/experiments/multi_agent/scripts/serve_qwen_vllm.sh \
+  > /tmp/vllm_9b.log 2>&1 &
+```
