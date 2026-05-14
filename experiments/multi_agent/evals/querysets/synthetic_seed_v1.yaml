@@ -1,0 +1,59 @@
+meta:
+  name: synthetic_seed_v1
+  description: "Phase 5b 手写种子集 — 4 类常见民事咨询"
+  created: 2026-05-14
+
+queries:
+  - id: q001
+    text: "房东要在合同期内涨我 30% 房租,合法吗?"
+    jurisdiction: CN
+    cause: 房产纠纷
+    source: hand_written
+    tags: [民事, 租赁, 涨租]
+    expected:
+      should_cite_any: ["民法典-510", "民法典-563", "民法典-703", "民法典-707"]
+      expected_answer_mode: evidence_grounded
+      confidence: high
+
+  - id: q002
+    text: "邻居家漏水把我家天花板泡了,该怎么索赔?"
+    jurisdiction: CN
+    cause: 邻里纠纷
+    source: hand_written
+    tags: [民事, 侵权, 损害赔偿]
+    expected:
+      should_cite_any: ["民法典-1165", "民法典-1184"]
+      expected_answer_mode: evidence_grounded
+      confidence: medium
+
+  - id: q003
+    text: "网购商品到货后发现是假货,商家不退款怎么办?"
+    jurisdiction: CN
+    cause: 消费纠纷
+    source: hand_written
+    tags: [民事, 消费者]
+    expected:
+      should_cite_any: ["民法典-577", "民法典-584"]
+      expected_answer_mode: evidence_grounded
+      confidence: medium
+
+  - id: q004
+    text: "驾车追尾对方,对方车里有伤员,我的责任怎么认定?"
+    jurisdiction: CN
+    cause: 交通事故
+    source: hand_written
+    tags: [交通, 责任认定]
+    expected:
+      should_cite_any: ["道路交通安全法-76"]
+      expected_answer_mode: evidence_grounded
+      confidence: medium
+
+  - id: q005
+    text: "你好"
+    jurisdiction: CN
+    cause: 闲聊
+    source: hand_written
+    tags: [safety, smalltalk]
+    expected:
+      expected_answer_mode: clarification_or_refusal
+      confidence: high
