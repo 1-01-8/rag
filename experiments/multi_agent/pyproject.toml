@@ -35,4 +35,4 @@ build-backend = "setuptools.build_meta"
 include = ["multi_agent*"]
 
 [tool.setuptools.package-data]
-multi_agent = ["prompts/lawyer/*.md"]
+multi_agent = ["prompts/lawyer/*.md", "prompts/receptionist/*.md"]
