@@ -1,7 +1,13 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, AsyncGenerator, Literal
 from pydantic import BaseModel, Field
+
+
+class StreamEvent(BaseModel):
+    kind: Literal["agent_start", "agent_end", "llm_token", "tool_start", "tool_end", "final_answer", "error"]
+    content: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 from multi_agent.providers.base import LLMProvider
 from multi_agent.tools.base import Tool
@@ -129,3 +135,24 @@ class BaseAgent(BaseModel, ABC):
             role="tool", content=_j.dumps(payload, ensure_ascii=False),
             tool_use_id=tc.tool_use_id,
         )
+
+    async def run_stream(self, input: AgentInput) -> AsyncGenerator[StreamEvent, None]:
+        """Stream version of run(). Yields high-level events for CLI/Web progress display.
+
+        Phase 1: minimal — only agent_start / agent_end / final_answer / error.
+        Token-level streaming requires provider.complete_stream() integration (Phase 2).
+        """
+        yield StreamEvent(kind="agent_start", content=self.name)
+        try:
+            output = await self.run(input)
+            yield StreamEvent(
+                kind="final_answer",
+                content=output.payload.model_dump_json(),
+                metadata={"steps_used": output.steps_used},
+            )
+        except Exception as e:
+            yield StreamEvent(kind="error", content=str(e),
+                              metadata={"type": type(e).__name__})
+            raise
+        finally:
+            yield StreamEvent(kind="agent_end", content=self.name)

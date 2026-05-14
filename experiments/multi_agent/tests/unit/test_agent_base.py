@@ -153,3 +153,25 @@ async def test_exceeding_max_tool_calls_raises_budget(tmp_run_dir):
         await agent.run(AgentInput(payload={"query": "x"}))
     rec.close()
     assert exc.value.budget == "max_tool_calls"
+
+
+from multi_agent.agents.base import StreamEvent
+
+
+@pytest.mark.asyncio
+async def test_run_stream_yields_tokens_and_final(tmp_run_dir):
+    rec = Recorder(run_id="r1", run_dir=tmp_run_dir)
+    provider = StubProvider(responses=[
+        ScriptedResponse(text='{"answer": "done"}', finish_reason="end_turn"),
+    ])
+    agent = _DummyAgent(name="dummy", role="t", provider=provider, recorder=rec)
+
+    collected: list[StreamEvent] = []
+    async for ev in agent.run_stream(AgentInput(payload={"query": "hi"})):
+        collected.append(ev)
+    rec.close()
+
+    kinds = [e.kind for e in collected]
+    assert "agent_start" in kinds
+    assert "agent_end" in kinds
+    assert "final_answer" in kinds
