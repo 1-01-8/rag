@@ -184,6 +184,9 @@ class AnthropicProvider(LLMProvider):
             params={"max_tokens": max_tokens, "temperature": temperature, "stream": True},
         ) as span:
             full_text = ""
+            usage_in = 0
+            usage_out = 0
+            stop_reason = "end_turn"
             try:
                 async with self._client.messages.stream(
                     model=model,
@@ -193,10 +196,34 @@ class AnthropicProvider(LLMProvider):
                     max_tokens=max_tokens,
                     temperature=temperature,
                 ) as stream:
-                    async for text in stream.text_stream:
-                        full_text += text
-                        yield StreamChunk(kind="token", content=text)
+                    async for event in stream:
+                        et = getattr(event, "type", None)
+                        if et == "message_start":
+                            msg = getattr(event, "message", None)
+                            u = getattr(msg, "usage", None) if msg else None
+                            if u:
+                                usage_in = getattr(u, "input_tokens", 0) or 0
+                        elif et == "content_block_delta":
+                            delta = getattr(event, "delta", None)
+                            dt = getattr(delta, "type", None) if delta else None
+                            if dt == "text_delta":
+                                text = getattr(delta, "text", "") or ""
+                                if text:
+                                    full_text += text
+                                    yield StreamChunk(kind="token", content=text)
+                        elif et == "message_delta":
+                            delta = getattr(event, "delta", None)
+                            sr = getattr(delta, "stop_reason", None) if delta else None
+                            if sr:
+                                stop_reason = self._normalize_stop_reason(sr)
+                            u = getattr(event, "usage", None)
+                            if u:
+                                usage_out = getattr(u, "output_tokens", 0) or 0
             except Exception as e:
                 raise ProviderUnavailable(f"Anthropic stream failed: {e}") from e
-            span.set_output({"raw": full_text, "usage": {}, "finish_reason": "end_turn"})
+            span.set_output({
+                "raw": full_text,
+                "usage": {"input_tokens": usage_in, "output_tokens": usage_out},
+                "finish_reason": stop_reason,
+            })
         yield StreamChunk(kind="end_turn")

@@ -174,12 +174,22 @@ class OpenAICompatibleProvider(LLMProvider):
                 stream = await self._client.chat.completions.create(
                     model=model, messages=oai_messages, tools=oai_tools or None,
                     max_tokens=max_tokens, temperature=temperature, stream=True,
+                    stream_options={"include_usage": True},
                 )
             except Exception as e:
                 raise ProviderUnavailable(f"OpenAI-compat stream failed: {e}") from e
 
             full_text = ""
+            captured_usage = {"input_tokens": 0, "output_tokens": 0}
+            finish_reason = "end_turn"
             async for event in stream:
+                # vLLM/OpenAI emits a final event with usage when include_usage=True;
+                # this event has empty choices[].
+                if event.usage:
+                    captured_usage = {
+                        "input_tokens": event.usage.prompt_tokens,
+                        "output_tokens": event.usage.completion_tokens,
+                    }
                 if not event.choices:
                     continue
                 delta = event.choices[0].delta
@@ -187,6 +197,6 @@ class OpenAICompatibleProvider(LLMProvider):
                     full_text += delta.content
                     yield StreamChunk(kind="token", content=delta.content)
                 if event.choices[0].finish_reason is not None:
-                    break
-            span.set_output({"raw": full_text, "usage": {}, "finish_reason": "end_turn"})
+                    finish_reason = self._normalize_finish_reason(event.choices[0].finish_reason)
+            span.set_output({"raw": full_text, "usage": captured_usage, "finish_reason": finish_reason})
         yield StreamChunk(kind="end_turn")
