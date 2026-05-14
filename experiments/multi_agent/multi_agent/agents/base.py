@@ -68,6 +68,8 @@ class BaseAgent(BaseModel, ABC):
         ]
 
         tool_specs = [t.to_spec() for t in self.tools] if self.tools else None
+        tool_calls_made: int = 0  # track how many tool calls have occurred
+        post_tool_reminder_added: bool = False  # inject citation-only reminder once
 
         for step in range(1, self.max_steps + 1):
             response = await self.provider.complete(
@@ -91,9 +93,41 @@ class BaseAgent(BaseModel, ABC):
                     if isinstance(result, Exception):
                         result = self._wrap_tool_exception(tc, result)
                     messages.append(self._tool_result_message(tc, result))
+                tool_calls_made += len(response.tool_calls)
+                # After the first batch of tool results, inject a one-time reminder
+                # to restrict citations strictly to what the tools returned.
+                if not post_tool_reminder_added:
+                    messages.append(AgentMessage(
+                        role="user",
+                        content=(
+                            "检索完成。现在请根据以上工具返回的结果撰写五段式 JSON 答案。\n"
+                            "⚠️ citations 数组中只允许出现工具结果中出现的法条号，"
+                            "严禁添加任何工具未返回的法条号。"
+                        ),
+                    ))
+                    post_tool_reminder_added = True
                 continue
 
-            # No tool calls → expect final answer
+            # No tool calls → enforce tool-first: if tools are available and none have
+            # been called yet, reject the premature answer and demand retrieval first.
+            # IMPORTANT: do NOT append the premature answer to context — doing so causes
+            # the model to anchor on its fabricated citations and re-use them even after
+            # real tool results arrive.
+            if tool_specs and tool_calls_made == 0:
+                messages.append(AgentMessage(
+                    role="user",
+                    content=(
+                        "⚠️ 错误：你跳过了检索步骤，直接给出了答案。"
+                        "你的回答已被丢弃，不会出现在最终结果中。\n"
+                        "现在必须先调用 statute_search 工具检索，"
+                        "然后仅根据工具返回的结果撰写答案，"
+                        "禁止使用训练记忆中的任何法条号。\n"
+                        "请立即调用 statute_search 工具。"
+                    ),
+                ))
+                continue
+
+            # Tool calls have been made (or no tools available) → accept final answer
             schema = self.output_schema()
             parsed_dict = parse_json_robust(response.text)
             parsed = schema.model_validate(parsed_dict)
