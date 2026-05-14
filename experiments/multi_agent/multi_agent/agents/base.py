@@ -36,6 +36,7 @@ class BaseAgent(BaseModel, ABC):
     max_tool_calls: int = 8
     timeout_seconds: int = 60
     tools: list[Tool] = Field(default_factory=list)
+    model: str = ""    # set explicitly by ProviderProfile; falls back to provider default
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -71,7 +72,7 @@ class BaseAgent(BaseModel, ABC):
         for step in range(1, self.max_steps + 1):
             response = await self.provider.complete(
                 messages=messages,
-                model=getattr(self.provider, "default_model", "stub-1"),
+                model=self.model or getattr(self.provider, "default_model", "stub-1"),
                 tools=tool_specs,
                 response_format=self.output_schema(),
                 recorder=self.recorder,

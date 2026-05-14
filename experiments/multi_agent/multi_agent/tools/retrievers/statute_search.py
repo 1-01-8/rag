@@ -100,12 +100,12 @@ class StatuteSearchTool(Tool):
             ev = Evidence(
                 doc_id=payload.get("doc_id", ""),
                 law_name=payload.get("law_name", ""),
+                law_short=payload.get("law_short", ""),
                 article_no=payload.get("article_no", ""),
                 text=payload.get("text", ""),
                 score=float(point.score) if point.score is not None else 0.0,
                 retriever="hybrid",
                 metadata={
-                    "law_short": payload.get("law_short", ""),
                     "book": payload.get("book", ""),
                     "chapter": payload.get("chapter", ""),
                     "concepts": payload.get("concepts", []),

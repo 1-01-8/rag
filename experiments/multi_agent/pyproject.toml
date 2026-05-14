@@ -11,12 +11,15 @@ dependencies = [
     "sentence-transformers>=3.0",
     "jieba>=0.42",
     "numpy>=1.26",
+    "anthropic>=0.40",
+    "openai>=1.50",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "respx>=0.21",
 ]
 
 [tool.pytest.ini_options]
