@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
@@ -28,7 +29,11 @@ class Recorder:
         self._jsonl = JsonlEventWriter(self.run_dir / "events.jsonl")
         self._sqlite = SqliteEventIndexer(self.run_dir / "events.db")
         self._closed = False
-        self._span_stack: list[str] = []
+        # Async-task-local stack: each coroutine gets its own view.
+        # Use ContextVar at recorder level so isolated runs don't share state.
+        self._span_stack_var: ContextVar[tuple[str, ...]] = ContextVar(
+            f"span_stack_{run_id}", default=()
+        )
         self._meta: dict = {"run_id": run_id, "started_at": self.now().isoformat()}
 
     def now(self) -> datetime:
@@ -60,15 +65,18 @@ class Recorder:
         return fresh_event_id()
 
     def current_parent_id(self) -> str | None:
-        return self._span_stack[-1] if self._span_stack else None
+        stack = self._span_stack_var.get()
+        return stack[-1] if stack else None
 
     def push_span(self, span_id: str) -> None:
-        self._span_stack.append(span_id)
+        stack = self._span_stack_var.get()
+        self._span_stack_var.set(stack + (span_id,))
 
     def pop_span(self, span_id: str) -> None:
-        if not self._span_stack or self._span_stack[-1] != span_id:
+        stack = self._span_stack_var.get()
+        if not stack or stack[-1] != span_id:
             raise RuntimeError(f"span stack corrupted; expected {span_id}")
-        self._span_stack.pop()
+        self._span_stack_var.set(stack[:-1])
 
     def set_meta(self, **fields) -> None:
         self._meta.update(fields)
