@@ -34,6 +34,7 @@ class BaseAgent(BaseModel, ABC):
     max_steps: int = 10
     max_total_tokens: int = 20_000
     max_tool_calls: int = 8
+    max_pre_tool_rejections: int = 2
     timeout_seconds: int = 60
     tools: list[Tool] = Field(default_factory=list)
     model: str = ""    # set explicitly by ProviderProfile; falls back to provider default
@@ -69,6 +70,7 @@ class BaseAgent(BaseModel, ABC):
 
         tool_specs = [t.to_spec() for t in self.tools] if self.tools else None
         tool_calls_made: int = 0  # track how many tool calls have occurred
+        pre_tool_rejections: int = 0  # track how many times model skipped tool-first
         post_tool_reminder_added: bool = False  # inject citation-only reminder once
 
         for step in range(1, self.max_steps + 1):
@@ -114,15 +116,20 @@ class BaseAgent(BaseModel, ABC):
             # the model to anchor on its fabricated citations and re-use them even after
             # real tool results arrive.
             if tool_specs and tool_calls_made == 0:
+                pre_tool_rejections += 1
+                if pre_tool_rejections > self.max_pre_tool_rejections:
+                    from multi_agent.errors import BudgetExceeded
+                    raise BudgetExceeded(self.name, "max_pre_tool_rejections", self.max_pre_tool_rejections)
+                first_tool_name = self.tools[0].name
                 messages.append(AgentMessage(
                     role="user",
                     content=(
                         "⚠️ 错误：你跳过了检索步骤，直接给出了答案。"
                         "你的回答已被丢弃，不会出现在最终结果中。\n"
-                        "现在必须先调用 statute_search 工具检索，"
+                        f"现在必须先调用 {first_tool_name} 工具检索，"
                         "然后仅根据工具返回的结果撰写答案，"
                         "禁止使用训练记忆中的任何法条号。\n"
-                        "请立即调用 statute_search 工具。"
+                        f"请立即调用 {first_tool_name} 工具。"
                     ),
                 ))
                 continue
