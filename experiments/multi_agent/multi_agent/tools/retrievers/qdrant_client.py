@@ -18,7 +18,7 @@ def get_qdrant_client() -> QdrantClient:
     global _client
     if _client is None:
         url = os.environ.get("QDRANT_URL", "http://localhost:6433")
-        _client = QdrantClient(url=url, timeout=30)
+        _client = QdrantClient(url=url, timeout=30, check_compatibility=False)
     return _client
 
 
