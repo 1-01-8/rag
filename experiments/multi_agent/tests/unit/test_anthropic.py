@@ -123,3 +123,44 @@ async def test_anthropic_marks_system_for_cache(provider, tmp_run_dir):
     sys_field = captured["body"]["system"]
     assert isinstance(sys_field, list)
     assert sys_field[-1].get("cache_control") == {"type": "ephemeral"}
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_anthropic_streams_tokens(provider, tmp_run_dir):
+    """Use SSE-formatted mock response."""
+    sse_body = (
+        'event: message_start\n'
+        'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":0}}}\n\n'
+        'event: content_block_start\n'
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'
+        'event: content_block_delta\n'
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n'
+        'event: content_block_delta\n'
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}\n\n'
+        'event: content_block_stop\n'
+        'data: {"type":"content_block_stop","index":0}\n\n'
+        'event: message_delta\n'
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}\n\n'
+        'event: message_stop\n'
+        'data: {"type":"message_stop"}\n\n'
+    )
+    respx.post(_BASE_URL).mock(
+        return_value=httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=sse_body.encode(),
+        )
+    )
+    rec = Recorder(run_id="r1", run_dir=tmp_run_dir)
+    chunks = []
+    async for ch in provider.complete_stream(
+        messages=[AgentMessage(role="user", content="hi")],
+        model="claude-sonnet-4-6", recorder=rec, agent_name="tester",
+    ):
+        chunks.append(ch)
+    rec.close()
+
+    text = "".join(c.content for c in chunks if c.kind == "token")
+    assert text == "hello world"
+    assert chunks[-1].kind == "end_turn"

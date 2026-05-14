@@ -140,6 +140,26 @@ def _fake_completion_with_malformed_args(name: str, args_str: str):
 
 
 @pytest.mark.asyncio
+async def test_openai_compat_streams_tokens(provider, tmp_run_dir):
+    rec = Recorder(run_id="r1", run_dir=tmp_run_dir)
+    chunks = []
+    async for ch in provider.complete_stream(
+        messages=[AgentMessage(role="user", content="count 1 to 3, one number per line")],
+        model="qwen3.5-9b", max_tokens=32, temperature=0,
+        recorder=rec, agent_name="tester",
+    ):
+        chunks.append(ch)
+    rec.close()
+    # At least one token chunk + one end_turn at end
+    kinds = [c.kind for c in chunks]
+    assert "token" in kinds
+    assert kinds[-1] == "end_turn"
+    # Concatenated tokens form non-empty text
+    text = "".join(c.content for c in chunks if c.kind == "token")
+    assert len(text) > 0
+
+
+@pytest.mark.asyncio
 async def test_provider_recovers_from_fenced_json_args(provider, tmp_run_dir):
     """If Qwen wraps tool args in ```json ... ```, parse_json_robust should
     recover them rather than crashing."""

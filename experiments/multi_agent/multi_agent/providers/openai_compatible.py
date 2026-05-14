@@ -163,5 +163,30 @@ class OpenAICompatibleProvider(LLMProvider):
         self, messages, *, model, tools=None,
         max_tokens=4096, temperature=0.0, recorder: Recorder, agent_name: str,
     ) -> AsyncGenerator[StreamChunk, None]:
-        raise NotImplementedError("complete_stream lands in Task 7")
-        yield  # unreachable; satisfies AsyncGenerator type
+        oai_messages = self._to_oai_messages(messages)
+        oai_tools = self._to_oai_tools(tools)
+        with recorder.span(
+            "llm_call", provider="openai_compat", model=model, agent_name=agent_name,
+            messages=oai_messages,
+            params={"max_tokens": max_tokens, "temperature": temperature, "stream": True},
+        ) as span:
+            try:
+                stream = await self._client.chat.completions.create(
+                    model=model, messages=oai_messages, tools=oai_tools or None,
+                    max_tokens=max_tokens, temperature=temperature, stream=True,
+                )
+            except Exception as e:
+                raise ProviderUnavailable(f"OpenAI-compat stream failed: {e}") from e
+
+            full_text = ""
+            async for event in stream:
+                if not event.choices:
+                    continue
+                delta = event.choices[0].delta
+                if delta.content:
+                    full_text += delta.content
+                    yield StreamChunk(kind="token", content=delta.content)
+                if event.choices[0].finish_reason is not None:
+                    break
+            span.set_output({"raw": full_text, "usage": {}, "finish_reason": "end_turn"})
+        yield StreamChunk(kind="end_turn")

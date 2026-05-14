@@ -169,5 +169,34 @@ class AnthropicProvider(LLMProvider):
         self, messages, *, model, tools=None,
         max_tokens=4096, temperature=0.0, recorder: Recorder, agent_name: str,
     ) -> AsyncGenerator[StreamChunk, None]:
-        raise NotImplementedError("complete_stream lands in Task 7")
-        yield  # unreachable; satisfies AsyncGenerator type
+        system, anthropic_messages = self._split_system_and_messages(messages)
+        anthropic_tools = self._to_anthropic_tools(tools)
+        cache_friendly_system = None
+        if system:
+            cache_friendly_system = [{
+                "type": "text", "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }]
+
+        with recorder.span(
+            "llm_call", provider="anthropic", model=model, agent_name=agent_name,
+            messages=anthropic_messages,
+            params={"max_tokens": max_tokens, "temperature": temperature, "stream": True},
+        ) as span:
+            full_text = ""
+            try:
+                async with self._client.messages.stream(
+                    model=model,
+                    system=cache_friendly_system,
+                    messages=anthropic_messages,
+                    tools=anthropic_tools or None,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                ) as stream:
+                    async for text in stream.text_stream:
+                        full_text += text
+                        yield StreamChunk(kind="token", content=text)
+            except Exception as e:
+                raise ProviderUnavailable(f"Anthropic stream failed: {e}") from e
+            span.set_output({"raw": full_text, "usage": {}, "finish_reason": "end_turn"})
+        yield StreamChunk(kind="end_turn")
