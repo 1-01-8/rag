@@ -157,3 +157,30 @@ class BaseAgent(BaseModel, ABC):
             raise
         finally:
             yield StreamEvent(kind="agent_end", content=self.name)
+
+    async def stream_one_turn(
+        self, user_input: str,
+    ) -> AsyncGenerator["StreamEvent", None]:
+        """Stream a single LLM turn without tool dispatch.
+
+        Useful for CLI/SSE consumers that want token-level output but don't need
+        the full ReAct loop. Tool dispatch + multi-turn ReAct still uses run() /
+        run_stream() (which are non-streaming under the hood for now — full
+        streaming-with-tools is a Phase 2c+ enhancement).
+        """
+        from multi_agent.schemas.messages import AgentMessage
+        messages = [
+            AgentMessage(role="system", content=self.system_prompt()),
+            AgentMessage(role="user", content=user_input),
+        ]
+        model = self.model or getattr(self.provider, "default_model", "stub-1")
+        async for chunk in self.provider.complete_stream(
+            messages=messages, model=model,
+            recorder=self.recorder, agent_name=self.name,
+        ):
+            if chunk.kind == "token":
+                yield StreamEvent(kind="llm_token", content=chunk.content)
+            elif chunk.kind == "end_turn":
+                yield StreamEvent(kind="agent_end", content=self.name)
+            elif chunk.kind == "error":
+                yield StreamEvent(kind="error", content=chunk.content)
