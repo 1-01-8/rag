@@ -65,7 +65,7 @@ class BaseAgent(BaseModel, ABC):
         tools_by_name = {t.name: t for t in self.tools}
         messages: list[AgentMessage] = [
             AgentMessage(role="system", content=self.system_prompt()),
-            AgentMessage(role="user", content=str(input.payload.get("query", input.payload))),
+            AgentMessage(role="user", content=self._render_input(input)),
         ]
 
         tool_specs = [t.to_spec() for t in self.tools] if self.tools else None
@@ -142,6 +142,14 @@ class BaseAgent(BaseModel, ABC):
 
         from multi_agent.errors import BudgetExceeded
         raise BudgetExceeded(self.name, "max_steps", self.max_steps)
+
+    def _render_input(self, input: "AgentInput") -> str:
+        """Render the AgentInput's payload into the user-message text.
+
+        Default: return payload["query"] as string. Subclasses override
+        to inject extra context (e.g. sub_cases for multi-issue).
+        """
+        return str(input.payload.get("query", input.payload))
 
     async def _dispatch_tool(self, tc, tools_by_name):
         from multi_agent.schemas.messages import ToolResult

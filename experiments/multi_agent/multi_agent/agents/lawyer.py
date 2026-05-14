@@ -34,3 +34,17 @@ class LawyerAgent(BaseAgent):
 
     def output_schema(self) -> type[LawyerOutput]:
         return LawyerOutput
+
+    def _render_input(self, input) -> str:
+        """If sub_cases present (multi-issue), inject them as a numbered list."""
+        payload = input.payload
+        query = str(payload.get("query", ""))
+        sub_cases = payload.get("sub_cases", [])
+        if not sub_cases:
+            return query
+        lines = [f"用户咨询: {query}", "", "本案包含以下独立子议题(请逐一回答):"]
+        for i, sc in enumerate(sub_cases, 1):
+            issue = sc.get("issue", "") if isinstance(sc, dict) else sc.issue
+            specialty = sc.get("specialty", "") if isinstance(sc, dict) else sc.specialty
+            lines.append(f"{i}. [{specialty}] {issue}")
+        return "\n".join(lines)
