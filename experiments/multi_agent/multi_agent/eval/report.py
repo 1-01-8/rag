@@ -30,6 +30,23 @@ def render_summary_md(group_dir: Path) -> Path:
         else (max(latencies) if latencies else 0)
     )
 
+    # Compute judge averages across ok rows that have a "judges" field.
+    judge_names: list[str] = []
+    judge_avgs: dict[str, float] = {}
+    rows_with_judges = [r for r in ok if r.get("judges")]
+    if rows_with_judges:
+        all_judge_names: set[str] = set()
+        for r in rows_with_judges:
+            all_judge_names.update(r["judges"].keys())
+        judge_names = sorted(all_judge_names)
+        for jname in judge_names:
+            scores = [
+                r["judges"][jname]["score"]
+                for r in rows_with_judges
+                if jname in r["judges"] and r["judges"][jname].get("score") is not None
+            ]
+            judge_avgs[jname] = sum(scores) / len(scores) if scores else 0.0
+
     lines = [
         f"# RunGroup `{group_dir.name}` 汇总\n",
         f"- 总计 Total: **{n}** queries (ok={len(ok)}, error={len(errs)})",
@@ -42,7 +59,12 @@ def render_summary_md(group_dir: Path) -> Path:
             f"- Citation accuracy: **{citation_hits}/{citation_scored}**"
             f" ({100 * citation_hits / citation_scored if citation_scored else 0:.0f}%)"
         ),
-        "",
+    ]
+    if judge_avgs:
+        avgs_str = ", ".join(f"{k}={v:.2f}" for k, v in judge_avgs.items())
+        lines.append(f"- Judge averages ({len(rows_with_judges)} rows): {avgs_str}")
+    lines.append("")
+    lines += [
         "## 逐 Query",
         "",
         "| Query | Status | Latency | Tokens (in/out) | Citation | Mode |",

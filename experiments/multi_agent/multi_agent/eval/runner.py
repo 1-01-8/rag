@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from multi_agent.eval.queryset import Query, QuerySet
 from multi_agent.eval.metrics import derive_run_metrics
+from multi_agent.eval.judges.base import LLMJudge
 from multi_agent.eval.judges.citation_accuracy import CitationAccuracyJudge
 
 
@@ -57,6 +58,7 @@ class ExperimentRunner:
         query_runner: QueryRunner,
         parallelism: int = 1,
         group_root: Path | None = None,
+        judges: list[LLMJudge] | None = None,
     ) -> None:
         self.query_set = query_set
         self.run_group_name = run_group_name
@@ -67,6 +69,7 @@ class ExperimentRunner:
             Path(group_root) if group_root else self.runs_root / "run_groups"
         )
         self.judge = CitationAccuracyJudge()
+        self.judges: list[LLMJudge] = list(judges) if judges else []
 
     async def run(self) -> RunGroup:
         """Execute all queries and write results.jsonl.  Returns a RunGroup."""
@@ -92,13 +95,27 @@ class ExperimentRunner:
                     citation_result = self.judge.judge(
                         q, out.get("lawyer_output") or {}
                     ).model_dump()
-                    return {
+                    row: dict = {
                         "query_id": q.id,
                         "run_id": out["run_id"],
                         "status": out.get("status", "ok"),
                         "metrics": metrics,
                         "citation_judge": citation_result,
                     }
+                    if self.judges:
+                        j_results = await asyncio.gather(*[
+                            j.judge(
+                                query=q.text,
+                                lawyer_output=out.get("lawyer_output") or {},
+                                evidence_pool=out.get("evidence_pool") or [],
+                            )
+                            for j in self.judges
+                        ])
+                        row["judges"] = {
+                            j.name: r.model_dump()
+                            for j, r in zip(self.judges, j_results)
+                        }
+                    return row
                 except Exception as exc:  # noqa: BLE001
                     return {
                         "query_id": q.id,
