@@ -12,6 +12,7 @@ class StreamEvent(BaseModel):
 from multi_agent.providers.base import LLMProvider
 from multi_agent.tools.base import Tool
 from multi_agent.tracing.recorder import Recorder
+from multi_agent.schemas.working_memory import WorkingMemory
 
 
 class AgentInput(BaseModel):
@@ -38,6 +39,7 @@ class BaseAgent(BaseModel, ABC):
     timeout_seconds: int = 60
     tools: list[Tool] = Field(default_factory=list)
     model: str = ""    # set explicitly by ProviderProfile; falls back to provider default
+    working_memory: WorkingMemory | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -60,7 +62,11 @@ class BaseAgent(BaseModel, ABC):
     async def _react_loop(self, input: AgentInput) -> AgentOutput:
         from multi_agent.schemas.messages import AgentMessage
         from multi_agent.providers.json_robust import parse_json_robust
+        from multi_agent.schemas.evidence import Evidence
         import asyncio
+
+        if self.working_memory is None:
+            object.__setattr__(self, "working_memory", WorkingMemory())
 
         tools_by_name = {t.name: t for t in self.tools}
         messages: list[AgentMessage] = [
@@ -94,6 +100,22 @@ class BaseAgent(BaseModel, ABC):
                 for tc, result in zip(response.tool_calls, results):
                     if isinstance(result, Exception):
                         result = self._wrap_tool_exception(tc, result)
+                    # Harvest Evidences into working_memory (Phase 3b)
+                    if result.payload:
+                        evs = result.payload.get("evidences")
+                        if isinstance(evs, list):
+                            for ev_dict in evs:
+                                try:
+                                    self.working_memory.add_evidence(Evidence.model_validate(ev_dict))
+                                except Exception:
+                                    pass
+                        # exact_read returns single evidence
+                        ev_single = result.payload.get("evidence")
+                        if isinstance(ev_single, dict):
+                            try:
+                                self.working_memory.add_evidence(Evidence.model_validate(ev_single))
+                            except Exception:
+                                pass
                     messages.append(self._tool_result_message(tc, result))
                 tool_calls_made += len(response.tool_calls)
                 # After the first batch of tool results, inject a one-time reminder
