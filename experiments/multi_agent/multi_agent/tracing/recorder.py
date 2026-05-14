@@ -29,6 +29,7 @@ class Recorder:
         self._sqlite = SqliteEventIndexer(self.run_dir / "events.db")
         self._closed = False
         self._span_stack: list[str] = []
+        self._meta: dict = {"run_id": run_id, "started_at": self.now().isoformat()}
 
     def now(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -46,6 +47,11 @@ class Recorder:
     def close(self) -> None:
         if self._closed:
             return
+        self._meta["finished_at"] = self.now().isoformat()
+        (self.run_dir / "meta.json").write_text(
+            json.dumps(self._meta, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         self._jsonl.close()
         self._sqlite.close()
         self._closed = True
@@ -63,6 +69,9 @@ class Recorder:
         if not self._span_stack or self._span_stack[-1] != span_id:
             raise RuntimeError(f"span stack corrupted; expected {span_id}")
         self._span_stack.pop()
+
+    def set_meta(self, **fields) -> None:
+        self._meta.update(fields)
 
     def span(self, kind: str, **attrs) -> "_SpanCM":
         """Context manager that emits a start event on enter and a matching end event on exit.

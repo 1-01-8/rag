@@ -76,3 +76,29 @@ def test_span_records_duration(tmp_run_dir):
     responses = [l for l in lines if l["event_type"] == "AgentResponded"]
     assert len(responses) == 1
     assert responses[0]["duration_ms"] >= 10
+
+
+import json as _json
+
+
+def test_meta_written_on_close(tmp_run_dir):
+    rec = Recorder(run_id="r1", run_dir=tmp_run_dir)
+    rec.set_meta(query="user query goes here", config={"profile": "stub"})
+    rec.close()
+
+    meta = _json.loads((tmp_run_dir / "meta.json").read_text())
+    assert meta["run_id"] == "r1"
+    assert meta["query"] == "user query goes here"
+    assert meta["config"]["profile"] == "stub"
+    assert "started_at" in meta
+    assert "finished_at" in meta
+
+
+def test_emit_after_close_raises(tmp_run_dir):
+    import pytest
+    rec = Recorder(run_id="r1", run_dir=tmp_run_dir)
+    rec.close()
+    with pytest.raises(RuntimeError):
+        rec.emit(RunStarted(event_id="e", run_id="r1",
+                            timestamp=rec.now(), parent_id=None,
+                            query="q", config={}))
