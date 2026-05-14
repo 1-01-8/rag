@@ -26,7 +26,8 @@
 - 不复用 `legal_rag/` 任何代码（仅共享 `data/` 与 `Chinese-Laws/` 语料文件）
 - 不补充法律 corpus（接受 177 部现有法律的边界，主要做 4 类民事咨询）
 - 不做 ReAct 之外的 agent 自主性范式（如 LLM-as-OS）
-- 不做 vector memory（用 Markdown + tag 索引代替）
+- 不做 agent_notes 向量化（agent 学习沉淀仍走 MD + tag 索引）
+- 不做 Conversational 自由对话模式（AutoGen 风格）——失控风险高，本地 Qwen 跑不稳
 
 ### 0.4 顶层架构原则
 
@@ -34,16 +35,17 @@
 2. **严格分层**：tracing → schemas → providers/memory/tools → agents → eval
 3. **没有全局 state**，所有状态通过 Pydantic `RunState` 对象传递
 4. **Agent-as-Tool 统一抽象**：子 agent（如 Secretary）被包装成 Tool 给父 agent（Lawyer）调用
-5. **失败永不静默**：所有错误 emit 事件，不跨 provider fallback
+5. **异步执行 + Fan-out 并发**：所有 agent / tool / provider 调用走 asyncio；同级多 tool 调用可并发（如 Lawyer 一次发起多个 Secretary 检索）
+6. **失败永不静默**：所有错误 emit 事件，不跨 provider fallback
 
 ### 0.5 时间表预期（粗估）
 
 | 阶段 | 周次 | 交付 |
 |---|---|---|
-| Phase 1 | W1 | trace 系统 + schema + stub agent + 单元测试 |
-| Phase 2 | W2-3 | Qdrant 索引 + BM25/dense/hybrid retriever + 1 个真 Lawyer agent |
-| Phase 3 | W4 | Receptionist + memory store + multi-issue 支持 |
-| Phase 4 | W5 | Secretary 拆出（agent-as-tool） |
+| Phase 1 | W1 | trace 系统 + schema + stub agent + 单元测试 + **asyncio 框架** |
+| Phase 2 | W2-3 | Qdrant **多 collection (statutes + cases + user_history)** 索引 + retriever + 1 个真 Lawyer agent + **流式输出** |
+| Phase 3 | W4 | Receptionist + memory store + **EntityState/WorkingMemory** + multi-issue 支持 |
+| Phase 4 | W5 | Secretary 拆出（agent-as-tool）+ **fan-out 并发** + 业务工具（合同审查/文书生成） |
 | Phase 5 | W6 | Supervisor + eval framework + 第一轮 ablation |
 
 实际推进根据观察到的失败模式调整，不强求时间表。
@@ -95,36 +97,47 @@ experiments/multi_agent/
 │   ├── recorder.py                 # JSONL + SQLite 双写
 │   ├── profiler.py                 # 延迟分析
 │   ├── viewer.py                   # Streamlit timeline
-│   └── replay.py                   # 单步重跑
+│   ├── replay.py                   # 单步重跑
+│   └── streaming.py                # StreamEvent + SSE 适配 (asyncio)
 ├── schemas/
 │   ├── messages.py                 # AgentMessage / ToolCall / ToolResult
 │   ├── state.py                    # RunState
+│   ├── working_memory.py           # WorkingMemory (run 内草稿区)
+│   ├── entity_state.py             # EntityState (sticky 结构字段)
 │   ├── evidence.py
 │   ├── verdicts.py
 │   └── memory.py                   # StickyContext / Turn / AgentNote
 ├── providers/
-│   ├── base.py
+│   ├── base.py                     # 含 parse_json_robust 工具函数
 │   ├── anthropic.py
 │   └── openai_compatible.py
 ├── tools/
-│   ├── base.py                     # Tool ABC
+│   ├── base.py                     # Tool ABC (async)
 │   ├── retrievers/
 │   │   ├── qdrant_client.py
 │   │   ├── dense_encoder.py
 │   │   ├── sparse_encoder.py
 │   │   ├── index_builder.py
-│   │   ├── dense_search.py
-│   │   ├── sparse_search.py
-│   │   ├── hybrid_search.py
+│   │   ├── statute_search.py       # statutes collection
+│   │   ├── case_search.py          # cases collection (来自 laws_data)
+│   │   ├── history_search.py       # user_history collection
+│   │   ├── hybrid_search.py        # 单 collection 内 sparse+dense+RRF
+│   │   ├── all_sources_search.py   # 跨 3 collection 融合
 │   │   └── exact_read.py
 │   ├── query_rewrite.py
 │   ├── citation_check.py
-│   └── corpus.py
+│   ├── corpus.py
+│   └── business/                   # LexAI 启发的结构化业务工具
+│       ├── contract_review.py
+│       ├── doc_generation.py
+│       └── doc_interpret.py
 ├── memory/
 │   ├── store.py                    # MarkdownMemoryStore
+│   ├── compaction.py               # turns 压缩策略
+│   ├── entity_extractor.py         # 从 turns 抽 EntityState
 │   └── schema.py
 ├── agents/
-│   ├── base.py                     # BaseAgent + ReAct loop
+│   ├── base.py                     # BaseAgent + async ReAct loop + run_stream
 │   ├── receptionist.py
 │   ├── lawyer.py
 │   ├── secretary.py
@@ -133,7 +146,7 @@ experiments/multi_agent/
 │   ├── receptionist/
 │   │   ├── system.md
 │   │   └── few_shot.yaml
-│   ├── lawyer/specialty_*.md       # 6 个专业律师 prompt
+│   ├── lawyer/specialty_*.md       # 6 个专业律师 prompt (五段式)
 │   ├── secretary/system.md
 │   └── supervisor/system.md
 ├── eval/
@@ -150,6 +163,14 @@ experiments/multi_agent/
 ├── runs/                           # 每个 query 一个 trace 目录
 ├── run_groups/                     # ExperimentRunner 产物
 ├── qdrant_storage/                 # Qdrant 持久化(gitignore)
+├── api/                            # V2 才实现,V1 留位
+│   ├── main.py                     # FastAPI 入口
+│   ├── routers/
+│   │   ├── run.py                  # POST /run, /run/stream
+│   │   └── inspect.py              # GET /runs/<id>
+│   └── sse.py
+├── messaging/                      # V2 实验性 (V1 不实现)
+│   └── bus.py                      # Typed MessageBus,作 ablation 对照
 └── tests/
     ├── conftest.py
     ├── unit/
@@ -270,7 +291,7 @@ class Recorder:
 
 ## 3. Agent 抽象层
 
-### 3.1 BaseAgent
+### 3.1 BaseAgent（async + run_stream）
 
 ```python
 class BaseAgent(BaseModel, ABC):
@@ -283,6 +304,7 @@ class BaseAgent(BaseModel, ABC):
     max_tool_calls: int = 8
     timeout_seconds: int = 60
     tools: list[Tool] = []
+    working_memory: WorkingMemory | None = None   # run 内共享草稿区
 
     @abstractmethod
     def system_prompt(self) -> str: ...
@@ -290,35 +312,56 @@ class BaseAgent(BaseModel, ABC):
     @abstractmethod
     def output_schema(self) -> type[BaseModel]: ...
 
-    def run(self, input: AgentInput) -> AgentOutput:
+    async def run(self, input: AgentInput) -> AgentOutput:
         """模板方法,子类不重写."""
         with self.recorder.span("agent_invoke", agent_name=self.name, role=self.role):
-            return self._react_loop(input)
+            return await self._react_loop(input)
+
+    async def run_stream(self, input: AgentInput) -> AsyncGenerator[StreamEvent, None]:
+        """流式版本:每个 LLM token / tool start / tool end / step transition 都 yield 事件.
+        Trace 同步落盘(不等结束),CLI/SSE 可订阅."""
+        ...
 ```
 
-### 3.2 ReAct 循环（基类实现）
+### 3.2 ReAct 循环（async,基类实现,支持 fan-out）
 
+```python
+async def _react_loop(self, input):
+    messages = [system_prompt, user_input]
+    for step in range(max_steps):
+        with recorder.span("llm_call"):
+            response = await provider.complete(messages, tools=self.tools)
+
+        if response.tool_calls:
+            # 关键:同一轮的多个 tool_calls 并发执行
+            tool_results = await asyncio.gather(*[
+                self._dispatch_tool(tc) for tc in response.tool_calls
+            ])
+            for tc, result in zip(response.tool_calls, tool_results):
+                messages.append(tool_result_message(tc, result))
+            continue
+
+        if response.has_final_answer:
+            validated = self.output_schema().model_validate(response.parsed)
+            return AgentOutput(payload=validated, steps_used=step+1)
+
+    raise BudgetExceeded(f"{self.name} hit max_steps")
+
+async def _dispatch_tool(self, tc):
+    """单个 tool 调用,内部 span 自动嵌套."""
+    with recorder.span("tool_call", tool=tc.name):
+        return await self._tools_by_name[tc.name].call(tc.args, self.recorder)
 ```
-messages = [system_prompt, user_input]
-for step in range(max_steps):
-    with recorder.span("llm_call"):
-        response = provider.complete(messages, tools=self.tools)
 
-    if response.tool_calls:
-        for tc in response.tool_calls:
-            with recorder.span("tool_call", tool=tc.name):
-                result = self._dispatch_tool(tc)
-            messages.append(tool_result_message(tc, result))
-        continue
+**Fan-out 关键场景**：
 
-    if response.has_final_answer:
-        validated = self.output_schema().model_validate(response.parsed)
-        return AgentOutput(payload=validated, steps_used=step+1)
+- multi-issue case:Lawyer 一次调 N 个 Secretary 处理 N 个 sub_case（并发）
+- 多角度检索:Secretary 一次调 statutes / cases / user_history 三个 retriever（并发）
+- Supervisor 多维 judge:groundedness / compliance / logic 三个 LLM judge 并发
 
-raise BudgetExceeded(f"{self.name} hit max_steps")
-```
+并发上限通过 `max_tool_calls` 控制；trace 里这些 tool_call span 拥有同一个 parent_id，时间戳重叠。
 
-### 3.3 Tool 抽象
+### 3.3 Tool 抽象（async）
 
 ```python
 class Tool(BaseModel):
@@ -327,10 +370,10 @@ class Tool(BaseModel):
     args_schema: type[BaseModel]
 
     @abstractmethod
-    def call(self, args: BaseModel, recorder: Recorder) -> ToolResult: ...
+    async def call(self, args: BaseModel, recorder: Recorder) -> ToolResult: ...
 ```
 
-### 3.4 Agent-as-Tool 模式
+### 3.4 Agent-as-Tool 模式（async + fan-out friendly）
 
 子 agent（Secretary）被包装成 Tool 给父 agent（Lawyer）调用：
 
@@ -343,21 +386,58 @@ class SecretaryAsTool(Tool):
     def __init__(self, secretary_agent: SecretaryAgent):
         self._agent = secretary_agent
 
-    def call(self, args, recorder):
-        result = self._agent.run(AgentInput.from_request(args))
+    async def call(self, args, recorder):
+        result = await self._agent.run(AgentInput.from_request(args))
         return ToolResult(payload=result.payload.model_dump())
 ```
 
-事件树自动嵌套（Lawyer 的 ToolCalled → Secretary 的 AgentInvoked → 等）。
+Fan-out 时父 agent 可以 `asyncio.gather` 多个 Secretary 实例并发处理 sub_cases。事件树自动嵌套（Lawyer 的 ToolCalled → Secretary 的 AgentInvoked → ...）。
 
 ### 3.5 各 Agent 角色
 
 | Agent | 主要工具 | 输出 schema |
 |---|---|---|
-| **Receptionist** | （内置）classify_intent / detect_safety / decompose_case | `ReceptionistOutput`：specialty, sub_cases, urgency |
-| **Lawyer** | ask_secretary / ask_user_clarify / finalize | `LawyerOutput`：draft, citations, reasoning |
-| **Secretary** | search_hybrid / search_bm25 / search_dense / read_article / verify_citation / rewrite_query | `SecretaryResponse`：evidences, notes, confidence |
-| **Supervisor** | check_groundedness / check_compliance / verify_citation | `SupervisorVerdict`：verdict, issues, suggested_fix |
+| **Receptionist** | （内置）classify_intent / detect_safety / decompose_case | `ReceptionistOutput`：specialty, sub_cases, urgency, entity_state |
+| **Lawyer** | ask_secretary（fan-out）/ ask_user_clarify / contract_review / doc_generation / doc_interpret / finalize | `LawyerOutput`：draft, citations, reasoning, mode |
+| **Secretary** | statute_search / case_search / history_search / all_sources_search / read_article / verify_citation / rewrite_query | `SecretaryResponse`：evidences, notes, confidence |
+| **Supervisor** | check_groundedness / check_compliance / check_logic / verify_citation（多 judge 可并发） | `SupervisorVerdict`：verdict, issues, suggested_fix |
+
+### 3.5.1 Lawyer Prompt 五段式框架（LexAI 借鉴）
+
+每个 specialty Lawyer prompt 必须包含以下五段式产出结构 + specialty 专属"提醒清单"：
+
+```
+【争议分析】明确争议焦点和法律性质
+【适用法规】引用具体法律条文(必须 cite 真实条文,不得编造)
+【相似类案】引用 cases collection 检索到的类案(若无则注明)
+【维权建议】证据收集 / 仲裁/诉讼策略 / 时效提醒
+【风险评估】胜诉可能性 / 替代方案
+
+# Specialty 专属提醒(示例:劳动)
+- 劳动仲裁时效为 1 年,必须提醒
+- 建议先收集劳动合同/工资流水/考勤记录
+- 经济补偿金 vs 赔偿金区分
+```
+
+各 specialty 维护一份独立的 `prompts/lawyer/specialty_<name>.md`，共享五段式骨架，提醒清单各自定制。
+
+### 3.5.2 Lawyer 业务模式（LexAI 借鉴）
+
+`LawyerOutput.mode` 字段标识本次任务类型：
+
+```python
+class LawyerOutput(BaseModel):
+    mode: Literal["consultation","contract_review","doc_generation","doc_interpret"]
+    primary_answer: str
+    citations: list[Citation]
+    # 模式特定(只在对应 mode 下非 None)
+    risk_items: list[RiskItem] | None = None         # contract_review
+    generated_doc: str | None = None                  # doc_generation
+    interpretation: dict | None = None                # doc_interpret
+    five_section: FiveSection | None = None           # consultation (五段式结构化)
+```
+
+Lawyer 根据 Receptionist 提供的 `task_type` 决定走哪个模式，相应工具调用不同。consultation 模式必产五段式；其他模式产结构化数据。
 
 ### 3.6 Multi-Issue 支持（基于 laws_data 数据洞察）
 
@@ -405,20 +485,56 @@ class ReceptionistOutput(BaseModel):
 
 | 工具 | 输入 | 输出 |
 |---|---|---|
-| `search_bm25` | query, k, filters | list[Evidence] |
-| `search_dense` | query, k, filters | list[Evidence] |
-| `search_hybrid` | query, k, filters | list[Evidence] |
+| `statute_search` | query, k, filters | list[Evidence] (from statutes collection) |
+| `case_search` | query, k, filters | list[Evidence] (from cases collection) |
+| `history_search` | query, k, filters | list[Evidence] (from user_history collection) |
+| `all_sources_search` | query, intent, k | list[Evidence] (跨 3 collection 融合) |
 | `read_article` | law_name, article_no | Evidence |
 | `verify_citation` | citation, evidence | bool + reason |
 | `rewrite_query` | raw_query, history, sticky | RewrittenQuery |
-| `read_memory` | session_id, target | list[Memory] |
+| `read_memory` | session_id, target, intent | list[Memory] |
 | `write_memory` | session_id, payload | bool |
+| `contract_review` | contract_text | ContractReviewResult |
+| `doc_generation` | case_facts, doc_type | GeneratedDoc |
+| `doc_interpret` | doc_text | InterpretResult |
 
 ### 4.2 向量数据库：Qdrant（路线 B —— 一站式 sparse+dense+RRF）
 
 - 本地 Docker：`qdrant/qdrant:v1.12.0`
-- Collection：`statutes`（含 sparse + dense 双 vector）
+- **三个 Collection**：
+  - `statutes`（177 部法条，sparse+dense）
+  - `cases`（laws_data 加工后 Q&A 对，sparse+dense）
+  - `user_history`（本用户 turns + sticky 增量索引，sparse+dense）
 - Hybrid 搜索原生支持（`query_points + prefetch + Fusion.RRF`）
+
+### 4.2.1 Collection 分工
+
+```
+statutes:       Chinese-Laws 23k 法条
+                payload: doc_id, law_name, article_no, text, book, chapter,
+                         cross_refs, concepts
+                dense embed: 拼接 law + 章节 + article 后 bge-m3 编码
+                sparse: jieba 分词 + IDF
+
+cases:          laws_data 加工后约 6-8k Q&A
+                payload: case_id, cause, question, answer, candidate_answers,
+                         extracted_cite[]  ← LLM 抽取的法条引用
+                dense embed: question (用户语言)
+                sparse: question + extracted_cite
+
+user_history:   本用户跨 session 的 turns + sticky 索引
+                payload: session_id, turn_no, run_id, summary,
+                         cited_articles[], entity_facts[]
+                dense embed: summary (压缩后)
+                sparse: cited_articles + key facts
+                增量构建:每次 turn 完成后 indexer 自动 upsert
+```
+
+**为什么 user_history 走 Qdrant 不违背 ADR-07**：
+
+ADR-07（"不做 vector memory"）针对的是 `agent_notes`——agent 学到的经验，量小、语义重、tag 检索够用。
+
+`user_history` 是历史用户对话的 RAG 扩展（数据量大、需要语义匹配"有没有问过类似问题"），属于知识库范畴而非 memory 范畴。memory 仍然 MD-only；`user_history` 是 memory 文件的**派生索引**，源头仍在 `memory_store/sessions/`。
 
 ```python
 client.query_points(
@@ -582,7 +698,7 @@ memory_store/
     └── supervisor-too-strict-on-hedging.md
 ```
 
-### 5.4 sticky.md 格式
+### 5.4 sticky.md 格式（含 EntityState 结构字段）
 
 ```markdown
 ---
@@ -595,18 +711,127 @@ last_law_name: 民法典
 mentioned_laws: [民法典, 商品房屋租赁管理办法]
 cited_articles:
   - {law: 民法典, article: "510", from_turn: 1}
-user_facts:
-  - 用户去年签了一年的租房合同
-  - 已住三个月
-  - 房东要求涨租 30%
 linked_runs: [r_a1b2c3, r_d4e5f6]      # ← trace 双向链接
+
+# ↓ EntityState — 结构化抽取的"事实底本"
+entity_state:
+  active_subjects:
+    - {role: 原告, identifier: 用户, attributes: [房屋承租人]}
+    - {role: 被告, identifier: 房东, attributes: []}
+  key_facts:
+    - {fact: 租期1年, confidence: high, source_turn: 1}
+    - {fact: 已住3个月, confidence: high, source_turn: 1}
+    - {fact: 涨幅30%, confidence: high, source_turn: 1}
+  open_questions:
+    - 租金调整是否需事先通知
+    - 合同是否明确禁止变更条款
+  rejected_paths:
+    - {path: 走刑事路径, reason: 未涉及胁迫}
+  legal_objectives:
+    - 抗辩涨租
+    - 必要时主张违约
+
+# ↓ 压缩后的历史 summary(老 turn 自动压成这里)
+history_summary: |
+  第 1-3 轮:用户询问租赁合同涨租合法性,确认民法典 510 / 563 适用,
+  Lawyer 建议先与房东协商。
 ---
 
 # Session s_abc123
 最近主题:租赁纠纷 / 房东单方涨租
 ```
 
-**注意**：sticky 不存详细引用文本（在 turns 里），只存 `{law, article, from_turn}` 短指针——避免 single source of truth 违例。
+**说明**：
+- sticky 不存详细引用文本（在 turns 里）,只存短指针
+- **EntityState** 是结构化的"事实底本"——Lawyer 启动时只读 entity_state 即可掌握会话上下文，不用每次解析整个 turn 历史
+- `history_summary` 是老 turn 压缩后的摘要（见 §5.4.1）
+
+### 5.4.1 Cross-Turn 压缩策略
+
+当 session 超过 5 轮时，**自动**把"老 turn"压缩进 sticky.md 的 `history_summary` 字段：
+
+```python
+# memory/compaction.py
+COMPACTION_THRESHOLD = 5           # 超过 5 轮触发
+KEEP_RECENT_TURNS = 3              # 最近 3 轮保留原文
+
+def maybe_compact(session_id: str, store: MarkdownMemoryStore, llm: LLMProvider):
+    turns = store.list_turns(session_id)
+    if len(turns) <= COMPACTION_THRESHOLD:
+        return
+    
+    # 旧 turn (前 N-3 条) → 压缩为一段 summary
+    to_compact = turns[:-KEEP_RECENT_TURNS]
+    summary = llm.complete(messages=[
+        {"role": "system", "content": COMPACT_SYSTEM_PROMPT},
+        {"role": "user", "content": format_turns_for_compaction(to_compact)},
+    ])
+    
+    # 写回 sticky.md.history_summary
+    sticky = store.read_sticky(session_id)
+    sticky.history_summary = summary.text
+    store.write_sticky(session_id, sticky)
+    
+    # 旧 turn 文件**不删**（只是不再读入 prompt）——保留可追溯性
+```
+
+压缩后：旧 turn 物理文件仍在 `turns/`，但 Lawyer 启动时只读 `entity_state + history_summary + 最近 3 个 turn`。
+
+**实验维度**：可 ablation `COMPACTION_THRESHOLD=∞`（不压缩）vs 默认值，看长 session 上下文压缩对答案质量的影响。
+
+### 5.4.2 WorkingMemory（run 内,trace 内）
+
+不同于 sticky（持久化到 MD），`WorkingMemory` 只活在一个 run 期间，**不写入 memory_store，但完整记入 trace**：
+
+```python
+# schemas/working_memory.py
+class WorkingMemory(BaseModel):
+    """单次 run 内 Lawyer/Secretary/Supervisor 共享的草稿区."""
+    hypotheses: list[Hypothesis] = []         # Lawyer 考虑过的法律路径
+    retrieved_evidence: list[Evidence] = []   # 累积证据池,跨 ReAct 步骤共享
+    discarded_evidence: list[DiscardedEvidence] = []  # 被驳回 + 原因
+    open_questions: list[str] = []            # run 内涌现的疑问
+    intermediate_drafts: list[str] = []       # Lawyer 的草稿版本
+
+    def add_evidence(self, e: Evidence) -> None: ...
+    def discard(self, e: Evidence, reason: str) -> None: ...
+    def query_relevant(self, intent: str) -> list[Evidence]: ...
+
+class Hypothesis(BaseModel):
+    statement: str                            # 例:"用户可主张违约"
+    supporting_evidence: list[str]            # 证据 doc_id
+    confidence: float
+    status: Literal["active","verified","rejected"]
+```
+
+**价值**：
+- 避免 Lawyer 在多轮 ReAct 中**重复检索同一法条**
+- Supervisor 审核时能看到"考虑过但放弃的路径" → 更深入的 verdict
+- trace 里 `working_memory_snapshot` 在每个 agent 切换点 emit 一次，可观察"思考演化"
+
+`WorkingMemory` 由 `Recorder` 在 `RunStarted` 时初始化、`RunFinished` 时序列化到 `artifacts/working_memory.json`。
+
+### 5.4.3 Memory 的 intent-based 读取
+
+不再"整文件读 sticky"，而是按 intent 选择性返回片段：
+
+```python
+class MarkdownMemoryStore:
+    def read_sticky(
+        self,
+        session_id: str,
+        intent: Literal["full","entities_only","recent_citations","summary_only"] = "full",
+    ) -> StickyContext | dict: ...
+```
+
+| intent | 返回 | 用途 |
+|---|---|---|
+| `full` | 完整 StickyContext | Lawyer 启动 |
+| `entities_only` | EntityState 部分 | Receptionist 检查 follow-up |
+| `recent_citations` | cited_articles 列表 | Secretary 决定要不要去 user_history 找类案 |
+| `summary_only` | history_summary | 任何想快速了解上下文的场景 |
+
+这样每个 agent 按需读 memory，prompt token 占用大幅下降。
 
 ### 5.5 turns/NNN-slug.md 格式
 
@@ -773,12 +998,12 @@ LLMProvider (ABC)
 
 agent 代码完全 provider-agnostic。
 
-### 6.2 统一接口
+### 6.2 统一接口（async）
 
 ```python
 class LLMProvider(ABC):
     @abstractmethod
-    def complete(
+    async def complete(
         self,
         messages: list[Message],
         *,
@@ -792,6 +1017,13 @@ class LLMProvider(ABC):
         agent_name: str,
     ) -> LLMResponse: ...
 
+    @abstractmethod
+    async def complete_stream(
+        self, messages, *, recorder, agent_name, ...
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """流式版本,yield token / tool_call_start / tool_call_arguments / end_turn."""
+        ...
+
 class LLMResponse(BaseModel):
     text: str
     parsed: BaseModel | None
@@ -801,6 +1033,41 @@ class LLMResponse(BaseModel):
     duration_ms: int
     finish_reason: Literal["end_turn","tool_use","max_tokens","refusal"]
 ```
+
+### 6.2.1 parse_json_robust 工具函数（LexAI 借鉴）
+
+LLM 经常返回 markdown-fenced JSON（特别是 Qwen 9B 几乎总这么干）。Provider 基类提供：
+
+```python
+# providers/base.py
+def parse_json_robust(raw: str) -> dict:
+    """容错 JSON 解析:
+    1. 去除 ```json ... ``` 包裹
+    2. 定位最外层 { ... } 范围
+    3. json.loads
+    失败时抛 ResponseValidationError(含原文便于调试).
+    """
+    cleaned = raw.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    start_idx = cleaned.find("{")
+    end_idx = cleaned.rfind("}")
+    if start_idx != -1 and end_idx != -1:
+        cleaned = cleaned[start_idx : end_idx + 1]
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        raise ResponseValidationError(f"JSON parse failed: {e}", raw=raw)
+```
+
+Provider 在调用 `response_format.model_validate_json` 前先走这个清洗——schema 失败重试时附原始 raw 便于 LLM 自己修正。
 
 ### 6.3 关键差异点处理
 
@@ -1060,6 +1327,8 @@ Streamlit 50-100 行，三栏：
 | memory 写失败 | atomic write | 抛 `MemoryWriteError`,rollback .tmp |
 | Qdrant 不可达 | retriever tool | 返回 error 给 LLM |
 | 未捕获异常 | 顶层 try/except | emit `RunFinished(status="error")`,不重试 |
+| **Fan-out 部分失败** | `asyncio.gather(return_exceptions=True)` | 单个 tool 失败包装成 error 返 LLM,其他正常返回（不取消已成功的） |
+| **AsyncIO 取消** | 上层 timeout | 子任务捕获 `CancelledError`,先 emit 中断事件再 propagate |
 
 ### 8.2 设计原则
 
@@ -1072,12 +1341,12 @@ Streamlit 50-100 行，三栏：
 ### 8.3 关键 invariant
 
 ```python
-def run_query(query: str, ...):
+async def run_query(query: str, ...):
     run_id = fresh_id()
     recorder = Recorder(run_id, ...)
     try:
         recorder.emit(RunStarted(...))
-        result = orchestrate(query, recorder, ...)
+        result = await orchestrate(query, recorder, ...)
         recorder.emit(RunFinished(status="ok", ...))
         return result
     except Exception as e:
@@ -1204,6 +1473,14 @@ tests/
 | ADR-16 | 案件拆分数据不入向量库 | 单独 collection | 不是法条，作 Receptionist few-shot |
 | ADR-17 | Receptionist 输出加 sub_cases，V1 顺序处理 | 单 specialty 路由 | 真实查询 30-50% multi-issue |
 | ADR-18 | Trace ↔ Memory 双向链接 | 单向 | Ablation 必备 |
+| ADR-19 | 异步执行（asyncio）+ Fan-out 并发 tool dispatch | 同步阻塞 | 多 Secretary 并发处理 sub_cases、Secretary 三 collection 并发检索、Supervisor 多 judge 并发,trace 树仍干净 |
+| ADR-20 | `parse_json_robust`（去 markdown fence + 定位 {} 范围）| 直接 json.loads | LexAI 经验:LLM 经常返回 ```json 包裹,Qwen 9B 几乎必然如此 |
+| ADR-21 | Lawyer specialty prompt 五段式 + 提醒清单 | 抽象 prompt | LexAI 经验:律师工作流术语化的 prompt 显著提升结构化质量 |
+| ADR-22 | 多 Qdrant Collection（statutes + cases + user_history） | 单一 collection | cases 提供真实类案、user_history 让 Lawyer 跨 session 复用过往咨询 |
+| ADR-23 | EntityState 结构字段 + WorkingMemory（run 内）+ Cross-Turn 压缩策略 + intent-based memory query | 整文件读 sticky | 增强短期 memory:Lawyer 启动只读 EntityState,WorkingMemory 避免重复检索,长 session 压缩防 context 爆炸 |
+| ADR-24 | run_stream() 流式输出 | 同步阻塞 | LexAI 经验:CLI/Web 体验大幅提升,trace 实时落盘 |
+| ADR-25 | 不做 Conversational 自由对话 multi-agent | AutoGen ConversableAgent | 失控风险高、调试难、本地 Qwen 9B 在自由对话下易跑飞;改用 V2 可选 typed MessageBus |
+| ADR-26 | V2 路线图保留 `api/`（FastAPI Web 入口）和 `messaging/`（typed MessageBus）目录占位 | V1 不开 | LexAI 启发:Web 入口和典型 multi-agent 通信是后续值得做的实验 |
 
 ---
 
@@ -1213,8 +1490,11 @@ tests/
 2. ContextComposer 何时介入？V1 简单截断够吗？
 3. 6 个 specialty Lawyer 的 prompt 怎么写？Cold-start 没有 few-shot 数据
 4. agent_notes 的生命周期管理：何时归档/删除？
-5. multi-issue 顺序处理的 token 成本：累积上下文是否爆炸？
+5. multi-issue fan-out 并发处理的 token 成本：N 个 Secretary 同时跑，prompt cache 命中率会不会显著下降？
 6. Qdrant 索引版本管理：corpus 更新后 incremental update？
+7. user_history collection 索引时机：每个 turn 完成后立即 upsert vs 批量？影响 latency 还是只是 background job？
+8. EntityState 抽取由谁负责：Receptionist？专门的 extractor agent？还是 Lawyer 答完 Supervisor 通过后由独立 LLM 调用产生？
+9. Cross-Turn 压缩的 LLM 选型：用 Haiku 还是本地 Qwen？压缩质量 vs 成本
 
 ---
 
