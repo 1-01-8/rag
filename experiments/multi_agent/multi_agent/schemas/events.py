@@ -103,3 +103,27 @@ class SupervisorVerdict(BaseEvent):
     verdict: Literal["pass", "revise", "reject"]
     issues: list[str] = Field(default_factory=list)
     suggested_fix: str | None = None
+
+
+from typing import Annotated, Union
+from pydantic import TypeAdapter, Field as PydField
+
+
+AnyEvent = Annotated[
+    Union[
+        RunStarted, RunFinished,
+        AgentInvoked, AgentResponded,
+        LLMRequested, LLMResponded,
+        ToolCalled, ToolReturned,
+        MemoryRead, MemoryWritten,
+        SupervisorVerdict,
+    ],
+    PydField(discriminator="event_type"),
+]
+
+_event_adapter: TypeAdapter[AnyEvent] = TypeAdapter(AnyEvent)
+
+
+def event_from_dict(raw: dict) -> AnyEvent:
+    """Parse a dict into the correct event subclass via event_type discriminator."""
+    return _event_adapter.validate_python(raw)

@@ -122,3 +122,41 @@ def test_supervisor_verdict():
         verdict="pass", issues=[],
     )
     assert v.verdict == "pass"
+
+
+from multi_agent.schemas.events import AnyEvent, event_from_dict
+import json
+
+
+def test_dump_and_reload_via_union():
+    """Any event can be dumped to JSON and reloaded via the union."""
+    original = AgentInvoked(
+        event_id="e", run_id="r", timestamp=_ts(), parent_id=None,
+        agent_name="lawyer", role="primary", input={},
+    )
+    j = original.model_dump_json()
+    raw = json.loads(j)
+    reloaded = event_from_dict(raw)
+    assert isinstance(reloaded, AgentInvoked)
+    assert reloaded.agent_name == "lawyer"
+
+
+def test_event_type_discriminates():
+    raw = {
+        "event_type": "RunFinished",
+        "event_id": "e", "run_id": "r",
+        "timestamp": _ts().isoformat(),
+        "parent_id": None, "status": "ok",
+        "final_answer": "x", "error": None,
+    }
+    obj = event_from_dict(raw)
+    assert isinstance(obj, RunFinished)
+    assert obj.final_answer == "x"
+
+
+def test_event_unknown_type_raises():
+    import pytest
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        event_from_dict({"event_type": "WhoKnows", "event_id": "e",
+                         "run_id": "r", "timestamp": _ts().isoformat()})
