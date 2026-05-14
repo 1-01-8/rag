@@ -8,7 +8,7 @@ from multi_agent.tools.retrievers.qdrant_client import drop_collection
 from multi_agent.tools.retrievers.dense_encoder import DenseEncoder
 from multi_agent.tools.retrievers.index_builder import build_index
 from multi_agent.tools.retrievers.all_sources_search import (
-    AllSourcesSearchTool, AllSourcesArgs,
+    AllSourcesSearchTool, AllSourcesArgs, _rrf_merge,
 )
 from multi_agent.tracing.recorder import Recorder
 
@@ -75,3 +75,25 @@ async def test_all_sources_returns_mixed_evidence(both_indexes, tmp_run_dir):
     retrievers = {Evidence.model_validate(e).retriever for e in evidences}
     assert "hybrid" in retrievers or "case" in retrievers
     assert len(evidences) >= 1
+
+
+def test_rrf_merge_namespaces_by_retriever():
+    """Two evidences with the same doc_id but different retrievers must NOT merge."""
+    # Statute side
+    stat_ev = Evidence(
+        doc_id="train_001",          # collision-shaped id
+        law_name="民法典", law_short="民法典", article_no="510",
+        text="statute text", score=0.5, retriever="hybrid",
+    )
+    # Case side with same doc_id
+    case_ev = Evidence(
+        doc_id="train_001",          # SAME doc_id
+        law_name="(case)", law_short="", article_no="train_001",
+        text="case text", score=0.5, retriever="case",
+    )
+    fused = _rrf_merge([[stat_ev], [case_ev]], top_k=5)
+    # Both should appear independently (2 fused evidences, not 1)
+    assert len(fused) == 2
+    retrievers = {e.retriever for e in fused}
+    assert "hybrid" in retrievers
+    assert "case" in retrievers

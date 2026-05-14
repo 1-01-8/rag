@@ -25,18 +25,19 @@ class AllSourcesArgs(BaseModel):
 def _rrf_merge(lists: list[list[Evidence]], k_constant: int = 60, top_k: int = 8) -> list[Evidence]:
     """Reciprocal Rank Fusion across multiple ranked Evidence lists.
 
-    Keeps evidences keyed by doc_id; sums 1/(k_constant + rank) across all
-    input lists. Returns top_k by fused score.
+    Keys by (retriever, doc_id) to prevent cross-source collisions
+    (e.g. case_id "train_001" colliding with a statute doc_id).
     """
-    fused: dict[str, tuple[Evidence, float]] = {}
+    fused: dict[tuple[str, str], tuple[Evidence, float]] = {}
     for lst in lists:
         for rank, ev in enumerate(lst):
             score_contribution = 1.0 / (k_constant + rank)
-            if ev.doc_id in fused:
-                existing_ev, existing_score = fused[ev.doc_id]
-                fused[ev.doc_id] = (existing_ev, existing_score + score_contribution)
+            key = (ev.retriever, ev.doc_id)
+            if key in fused:
+                existing_ev, existing_score = fused[key]
+                fused[key] = (existing_ev, existing_score + score_contribution)
             else:
-                fused[ev.doc_id] = (ev, score_contribution)
+                fused[key] = (ev, score_contribution)
     ranked = sorted(fused.values(), key=lambda x: -x[1])[:top_k]
     return [ev.model_copy(update={"score": float(score)}) for ev, score in ranked]
 

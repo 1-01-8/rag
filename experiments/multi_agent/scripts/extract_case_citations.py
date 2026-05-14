@@ -41,12 +41,12 @@ EXTRACTION_PROMPT = """你是法律文本分析器。从下面的律师答复中
 """
 
 
-async def extract_one(provider, answer: str, rec: Recorder, agent_name: str) -> tuple[list[str], float]:
+async def extract_one(provider, answer: str, model: str, rec: Recorder, agent_name: str) -> tuple[list[str], float]:
     """Returns (doc_ids, confidence)."""
     try:
         resp = await provider.complete(
             messages=[AgentMessage(role="user", content=EXTRACTION_PROMPT.format(answer=answer))],
-            model="qwen3.5-9b",
+            model=model,
             max_tokens=256,
             temperature=0,
             recorder=rec,
@@ -65,6 +65,10 @@ async def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=0, help="0 = all")
     parser.add_argument("--run-dir", type=Path, default=Path("runs/extraction"))
+    parser.add_argument(
+        "--model", default="qwen3.5-9b",
+        help="Model name passed to the provider. Default: qwen3.5-9b",
+    )
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +86,7 @@ async def main():
         for record in records:
             if args.limit and n_total >= args.limit:
                 break
-            doc_ids, conf = await extract_one(provider, record.answer, rec, "extractor")
+            doc_ids, conf = await extract_one(provider, record.answer, args.model, rec, "extractor")
             record = record.model_copy(update={
                 "extracted_cite_ids": doc_ids,
                 "extraction_confidence": conf,
