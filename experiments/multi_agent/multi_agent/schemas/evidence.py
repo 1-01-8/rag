@@ -11,3 +11,8 @@ class Evidence(BaseModel):
     score: float
     retriever: Literal["bm25", "dense", "hybrid", "exact", "memory", "case", "history"]
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def law_short(self) -> str:
+        """Convenience accessor for metadata['law_short']."""
+        return self.metadata.get("law_short", "")
