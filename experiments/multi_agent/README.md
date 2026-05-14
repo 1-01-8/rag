@@ -32,3 +32,22 @@ Multi_agent collections coexist with legacy `legal_rag/` collections under the `
 - `ma_user_history` — turn/sticky-derived index (Phase 2d)
 
 Connection URL is configurable via the `QDRANT_URL` env var (default `http://localhost:6433`).
+
+## Local Qwen 3.5 9B (vLLM)
+
+This project's `openai_compatible` provider talks to a local Qwen 3.5 9B served by vLLM at `http://localhost:8000/v1`.
+
+```bash
+# Start (one-time per machine boot)
+cd /home/xxm/models/qwen3.5-9b
+conda activate qwen35
+nohup bash serve_vllm.sh > /tmp/vllm_9b.log 2>&1 &
+
+# Verify (waits ~2 min on first start)
+curl http://localhost:8000/v1/models
+
+# Stop
+pkill -9 -f vllm
+```
+
+The service uses GPU card 3 (~20 GB VRAM). See `/home/xxm/models/qwen3.5-9b/USAGE.md` for details.
