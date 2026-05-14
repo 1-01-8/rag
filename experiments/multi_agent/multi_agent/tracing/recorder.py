@@ -2,8 +2,14 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
-from multi_agent.schemas.events import BaseEvent
+from multi_agent.schemas.events import (
+    BaseEvent,
+    AgentInvoked, AgentResponded,
+    LLMRequested, LLMResponded,
+    ToolCalled, ToolReturned,
+)
 from multi_agent.tracing.jsonl_writer import JsonlEventWriter
 from multi_agent.tracing.sqlite_indexer import SqliteEventIndexer
 from multi_agent.tracing.ulid_gen import fresh_event_id
@@ -22,6 +28,7 @@ class Recorder:
         self._jsonl = JsonlEventWriter(self.run_dir / "events.jsonl")
         self._sqlite = SqliteEventIndexer(self.run_dir / "events.db")
         self._closed = False
+        self._span_stack: list[str] = []
 
     def now(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -45,3 +52,123 @@ class Recorder:
 
     def fresh_event_id(self) -> str:
         return fresh_event_id()
+
+    def current_parent_id(self) -> str | None:
+        return self._span_stack[-1] if self._span_stack else None
+
+    def push_span(self, span_id: str) -> None:
+        self._span_stack.append(span_id)
+
+    def pop_span(self, span_id: str) -> None:
+        if not self._span_stack or self._span_stack[-1] != span_id:
+            raise RuntimeError(f"span stack corrupted; expected {span_id}")
+        self._span_stack.pop()
+
+    def span(self, kind: str, **attrs) -> "_SpanCM":
+        """Context manager that emits a start event on enter and a matching end event on exit.
+
+        kind ∈ {"agent_invoke", "llm_call", "tool_call"} (extensible).
+        attrs go to the start event's required fields (see _SpanCM._build_start).
+        """
+        return _SpanCM(recorder=self, kind=kind, attrs=attrs)
+
+
+class _SpanCM:
+    """Span context manager. Emits {kind}_start on __enter__,
+    {kind}_end on __exit__. Tracks parent_id from outer spans via a per-recorder stack."""
+
+    def __init__(self, recorder: "Recorder", kind: str, attrs: dict):
+        self.recorder = recorder
+        self.kind = kind
+        self.attrs = attrs
+        self.span_id: str = ""
+        self.parent_id: str | None = None
+        self._t0: float = 0.0
+        self._input: dict | None = None
+        self._output: dict | None = None
+        self._error: str | None = None
+
+    def __enter__(self):
+        self.span_id = self.recorder.fresh_event_id()
+        self.parent_id = self.recorder.current_parent_id()
+        self.recorder.push_span(self.span_id)
+        self._t0 = monotonic()
+        start = self._build_start()
+        self.recorder.emit(start)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        duration_ms = int((monotonic() - self._t0) * 1000)
+        if exc is not None:
+            self._error = f"{exc_type.__name__}: {exc}"
+        end = self._build_end(duration_ms)
+        self.recorder.emit(end)
+        self.recorder.pop_span(self.span_id)
+        return False  # never swallow
+
+    def set_input(self, payload: dict) -> None:
+        self._input = payload
+
+    def set_output(self, payload: dict) -> None:
+        self._output = payload
+
+    def attach(self, event: BaseEvent) -> None:
+        """Emit an arbitrary event, parented to this span."""
+        self.recorder.emit(event)
+
+    def _build_start(self) -> BaseEvent:
+        ts = self.recorder.now()
+        if self.kind == "agent_invoke":
+            return AgentInvoked(
+                event_id=self.span_id, run_id=self.recorder.run_id,
+                timestamp=ts, parent_id=self.parent_id,
+                agent_name=self.attrs.get("agent_name", ""),
+                role=self.attrs.get("role", ""),
+                input=self._input or {},
+            )
+        if self.kind == "llm_call":
+            return LLMRequested(
+                event_id=self.span_id, run_id=self.recorder.run_id,
+                timestamp=ts, parent_id=self.parent_id,
+                provider=self.attrs.get("provider", ""),
+                model=self.attrs.get("model", ""),
+                messages=self.attrs.get("messages", []),
+                params=self.attrs.get("params", {}),
+            )
+        if self.kind == "tool_call":
+            return ToolCalled(
+                event_id=self.span_id, run_id=self.recorder.run_id,
+                timestamp=ts, parent_id=self.parent_id,
+                tool_name=self.attrs.get("tool_name", ""),
+                args=self.attrs.get("args", {}),
+                agent_name=self.attrs.get("agent_name", ""),
+            )
+        raise ValueError(f"unknown span kind: {self.kind}")
+
+    def _build_end(self, duration_ms: int) -> BaseEvent:
+        ts = self.recorder.now()
+        end_id = self.recorder.fresh_event_id()
+        if self.kind == "agent_invoke":
+            return AgentResponded(
+                event_id=end_id, run_id=self.recorder.run_id,
+                timestamp=ts, parent_id=self.span_id,
+                agent_name=self.attrs.get("agent_name", ""),
+                output=self._output or ({"error": self._error} if self._error else {}),
+                duration_ms=duration_ms,
+            )
+        if self.kind == "llm_call":
+            return LLMResponded(
+                event_id=end_id, run_id=self.recorder.run_id,
+                timestamp=ts, parent_id=self.span_id,
+                raw_response="" if self._output is None else str(self._output.get("raw", "")),
+                usage=(self._output or {}).get("usage", {}),
+                duration_ms=duration_ms,
+                finish_reason=(self._output or {}).get("finish_reason", "end_turn"),
+            )
+        if self.kind == "tool_call":
+            return ToolReturned(
+                event_id=end_id, run_id=self.recorder.run_id,
+                timestamp=ts, parent_id=self.span_id,
+                result=self._output, error=self._error, duration_ms=duration_ms,
+            )
+        raise ValueError(f"unknown span kind: {self.kind}")
