@@ -93,3 +93,33 @@ async def test_anthropic_complete_tool_use(provider, tmp_run_dir):
     assert resp.tool_calls[0].tool_name == "statute_search"
     assert resp.tool_calls[0].args == {"query": "民法典 510"}
     assert resp.tool_calls[0].tool_use_id == "toolu_01"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_anthropic_marks_system_for_cache(provider, tmp_run_dir):
+    """The system message should be sent with cache_control: ephemeral."""
+    captured = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        import json as _j
+        captured["body"] = _j.loads(request.content)
+        return httpx.Response(200, json=_mock_message_response(
+            [{"type": "text", "text": "ok"}], "end_turn",
+        ))
+
+    respx.post(_BASE_URL).mock(side_effect=_capture)
+    rec = Recorder(run_id="r1", run_dir=tmp_run_dir)
+    await provider.complete(
+        messages=[
+            AgentMessage(role="system", content="You are a legal assistant."),
+            AgentMessage(role="user", content="hi"),
+        ],
+        model="claude-sonnet-4-6",
+        recorder=rec, agent_name="tester",
+    )
+    rec.close()
+
+    sys_field = captured["body"]["system"]
+    assert isinstance(sys_field, list)
+    assert sys_field[-1].get("cache_control") == {"type": "ephemeral"}

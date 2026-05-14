@@ -110,10 +110,19 @@ class AnthropicProvider(LLMProvider):
             messages=anthropic_messages,
             params={"max_tokens": max_tokens, "temperature": temperature, "system": system},
         ) as span:
+            cache_friendly_system = None
+            if system:
+                cache_friendly_system = [
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
             try:
                 msg = await self._client.messages.create(
                     model=model,
-                    system=system or None,
+                    system=cache_friendly_system,
                     messages=anthropic_messages,
                     tools=anthropic_tools or None,
                     max_tokens=max_tokens,
