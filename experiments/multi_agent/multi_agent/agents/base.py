@@ -73,6 +73,9 @@ class BaseAgent(BaseModel, ABC):
             )
 
             if response.tool_calls:
+                if len(response.tool_calls) > self.max_tool_calls:
+                    from multi_agent.errors import BudgetExceeded
+                    raise BudgetExceeded(self.name, "max_tool_calls", self.max_tool_calls)
                 # Fan-out: dispatch all tool calls concurrently
                 results = await asyncio.gather(*[
                     self._dispatch_tool(tc, tools_by_name) for tc in response.tool_calls

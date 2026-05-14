@@ -107,3 +107,49 @@ async def test_fan_out_parallel_tools(tmp_run_dir):
     tool_calls = [l for l in lines if l["event_type"] == "ToolCalled"]
     assert len(tool_calls) == 2
     assert tool_calls[0]["parent_id"] == tool_calls[1]["parent_id"]
+
+
+from multi_agent.errors import BudgetExceeded
+
+
+@pytest.mark.asyncio
+async def test_exceeding_max_steps_raises_budget(tmp_run_dir):
+    rec = Recorder(run_id="r1", run_dir=tmp_run_dir)
+    # All responses request more tool calls — agent never finalizes
+    provider = StubProvider(responses=[
+        ScriptedResponse(
+            tool_calls=[ToolCallRequest(tool_use_id=f"t{i}", tool_name="echo", args={"msg": "x"})],
+            finish_reason="tool_use",
+        )
+        for i in range(5)
+    ])
+    agent = _DummyAgent(name="dummy", role="t",
+                        provider=provider, recorder=rec,
+                        tools=[_EchoTool()], max_steps=3)
+    with pytest.raises(BudgetExceeded) as exc:
+        await agent.run(AgentInput(payload={"query": "x"}))
+    rec.close()
+    assert exc.value.budget == "max_steps"
+    assert exc.value.limit == 3
+
+
+@pytest.mark.asyncio
+async def test_exceeding_max_tool_calls_raises_budget(tmp_run_dir):
+    rec = Recorder(run_id="r1", run_dir=tmp_run_dir)
+    # Single LLM response with 5 tool calls; agent allows only 3
+    provider = StubProvider(responses=[
+        ScriptedResponse(
+            tool_calls=[
+                ToolCallRequest(tool_use_id=f"t{i}", tool_name="echo", args={"msg": str(i)})
+                for i in range(5)
+            ],
+            finish_reason="tool_use",
+        ),
+    ])
+    agent = _DummyAgent(name="dummy", role="t",
+                        provider=provider, recorder=rec,
+                        tools=[_EchoTool()], max_tool_calls=3)
+    with pytest.raises(BudgetExceeded) as exc:
+        await agent.run(AgentInput(payload={"query": "x"}))
+    rec.close()
+    assert exc.value.budget == "max_tool_calls"
