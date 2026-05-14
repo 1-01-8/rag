@@ -7,6 +7,10 @@ dependencies = [
     "pydantic>=2.5",
     "python-ulid>=2.0",
     "aiosqlite>=0.19",
+    "qdrant-client>=1.12",
+    "sentence-transformers>=3.0",
+    "jieba>=0.42",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
