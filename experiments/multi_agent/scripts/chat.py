@@ -107,6 +107,24 @@ def _print_answer(result: dict, *, with_supervisor: bool) -> None:
     except Exception:
         lo = {}
 
+    # Clarification mode: render as question list, skip five_section
+    mode = lo.get("mode", "consultation")
+    if mode == "clarification":
+        print("\n" + "=" * 70)
+        print("❓ 律师需要更多信息")
+        print("=" * 70)
+        print(lo.get("primary_answer", ""))
+        print("\n请回答以下问题:")
+        for i, q in enumerate(lo.get("clarifying_questions", []), 1):
+            print(f"  {i}. {q}")
+        if with_supervisor and "supervisor_verdict" in result:
+            v = result["supervisor_verdict"]
+            verdict = v.get("verdict", "?")
+            emoji = {"pass": "✅", "revise": "⚠️", "reject": "❌"}.get(verdict, "?")
+            print(f"\n{emoji} Supervisor: {verdict}  (自动 pass — 等待用户补充)")
+        print("=" * 70)
+        return
+
     print("\n" + "=" * 70)
     print("📋 答复")
     print("=" * 70)

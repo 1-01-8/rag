@@ -85,6 +85,24 @@ async def run_with_supervisor(
     except Exception:
         lawyer_out_dict = {}
 
+    # Short-circuit: clarification mode needs no Supervisor review.
+    if lawyer_out_dict.get("mode") == "clarification":
+        sup_run_id = fresh_run_id()
+        verdict_dict = {
+            "verdict": "pass",
+            "confidence": 1.0,
+            "issues": [],
+            "suggested_fix": None,
+            "citation_checks": [],
+            "groundedness": None,
+        }
+        return {
+            "lawyer_run_id": lawyer_result["run_id"],
+            "supervisor_run_id": sup_run_id,
+            "lawyer_result": lawyer_result,
+            "supervisor_verdict": verdict_dict,
+        }
+
     # Run Supervisor in its own isolated run/recorder.
     sup_run_id = fresh_run_id()
     sup_recorder = Recorder(run_id=sup_run_id, run_dir=Path(runs_root) / sup_run_id)

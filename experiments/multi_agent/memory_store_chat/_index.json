@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "regenerated_at": "2026-05-15T16:34:06.058341",
+  "sessions": {
+    "chat_38bc69": {
+      "path": "sessions/chat_38bc69/sticky.md",
+      "turn_count": 2,
+      "tags": [],
+      "linked_runs": [
+        "r_01KRN8S0S8D3D1RD3V0WG72J6Y",
+        "r_01KRN8W7805X64X11E3P33YPEZ"
+      ]
+    },
+    "chat_7ab871": {
+      "path": "sessions/chat_7ab871/sticky.md",
+      "turn_count": 3,
+      "tags": [],
+      "linked_runs": [
+        "r_01KRN6V5VVB9X3AEJZPNTRXGXY",
+        "r_01KRN70CMHMD9AC1F9DFCV07VQ",
+        "r_01KRN74F97DR2QA27JH6HS00SV"
+      ]
+    },
+    "chat_ab0c32": {
+      "path": "sessions/chat_ab0c32/sticky.md",
+      "turn_count": 1,
+      "tags": [],
+      "linked_runs": [
+        "r_01KRN8D8W47627AMG7B7811WBW"
+      ]
+    },
+    "chat_bc43db": {
+      "path": "sessions/chat_bc43db/sticky.md",
+      "turn_count": 1,
+      "tags": [],
+      "linked_runs": [
+        "r_01KRN4ZZEHPWCWB1KMD66BKESR"
+      ]
+    }
+  },
+  "notes_by_tag": {},
+  "notes_by_about_agent": {},
+  "notes_by_name": {}
+}

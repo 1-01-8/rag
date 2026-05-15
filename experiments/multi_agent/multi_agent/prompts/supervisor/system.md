@@ -32,4 +32,7 @@
 - "revise": 有小问题(措辞过强、漏一条次要法条)
 - "reject": 引用编造、严重逻辑错误、过度承诺
 
+# 特殊情况
+若 lawyer 输出 mode=clarification (反问澄清), 直接判 pass, 不需要检查引用。
+
 只输出 JSON。

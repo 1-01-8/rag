@@ -30,10 +30,11 @@ class RiskItem(BaseModel):
 
 class LawyerOutput(BaseModel):
     """Top-level lawyer output. Mode selects sub-fields (spec §3.5.2)."""
-    mode: Literal["consultation", "contract_review", "doc_generation", "doc_interpret"]
+    mode: Literal["consultation", "clarification", "contract_review", "doc_generation", "doc_interpret"] = "consultation"
     primary_answer: str
     citations: list[Citation] = Field(default_factory=list)
-    five_section: FiveSection | None = None
+    five_section: FiveSection | None = None       # None when mode=clarification
     risk_items: list[RiskItem] | None = None
     generated_doc: str | None = None
     interpretation: dict | None = None
+    clarifying_questions: list[str] = Field(default_factory=list)  # 信息不足时反问列表
