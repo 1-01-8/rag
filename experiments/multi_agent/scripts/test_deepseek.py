@@ -1,15 +1,13 @@
 #!/usr/bin/env python
-"""快速验证 DeepSeek API key + 连通性 + tool calling.
+"""快速验证 DeepSeek / SiliconFlow 连通 + tool calling.
 
-跑这个之前: export DEEPSEEK_API_KEY=sk-xxx
+用法:
+    python scripts/test_deepseek.py                       # 默认 deepseek 官方
+    python scripts/test_deepseek.py --provider siliconflow
 
-输出预期:
-  ✓ Connected
-  ✓ Plain completion: ...
-  ✓ Tool-call: dummy_tool was invoked
-
-如果失败, key 或网络有问题, 不要再跑 chat.py。
+跑前: export DEEPSEEK_API_KEY=...  或  export SILICONFLOW_API_KEY=...
 """
+import argparse
 import asyncio
 import os
 import sys
@@ -22,14 +20,28 @@ from multi_agent.tracing.recorder import Recorder
 
 
 async def main() -> int:
-    key = os.environ.get("DEEPSEEK_API_KEY")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--provider", choices=["deepseek", "siliconflow"], default="deepseek")
+    ap.add_argument("--model", default=None)
+    args = ap.parse_args()
+
+    if args.provider == "siliconflow":
+        key = os.environ.get("SILICONFLOW_API_KEY")
+        base_url = "https://api.siliconflow.cn/v1"
+        model = args.model or "deepseek-ai/DeepSeek-V4-Flash"
+        env_name = "SILICONFLOW_API_KEY"
+    else:
+        key = os.environ.get("DEEPSEEK_API_KEY")
+        base_url = "https://api.deepseek.com/v1"
+        model = args.model or "deepseek-chat"
+        env_name = "DEEPSEEK_API_KEY"
+
     if not key:
-        print("❌ DEEPSEEK_API_KEY 未设置. export DEEPSEEK_API_KEY=sk-xxx")
+        print(f"❌ {env_name} 未设置. export {env_name}=sk-xxx")
         return 1
 
-    provider = OpenAICompatibleProvider(
-        base_url="https://api.deepseek.com/v1", api_key=key,
-    )
+    print(f"Provider: {args.provider}  base_url={base_url}  model={model}")
+    provider = OpenAICompatibleProvider(base_url=base_url, api_key=key)
     rec = Recorder(run_id="ds_smoke", run_dir=Path("/tmp/ds_smoke"))
 
     # Test 1: plain completion
@@ -40,7 +52,7 @@ async def main() -> int:
                 AgentMessage(role="system", content="You are a concise assistant."),
                 AgentMessage(role="user", content="一句话告诉我民法典第 510 条是什么?"),
             ],
-            model="deepseek-chat",
+            model=model,
             tools=None,
             temperature=0.0, max_tokens=200,
             recorder=rec, agent_name="smoke",
@@ -67,7 +79,7 @@ async def main() -> int:
             messages=[
                 AgentMessage(role="user", content="北京今天天气如何? 调 get_weather."),
             ],
-            model="deepseek-chat",
+            model=model,
             tools=[dummy_tool],
             temperature=0.0, max_tokens=200,
             recorder=rec, agent_name="smoke",
@@ -84,8 +96,8 @@ async def main() -> int:
         return 1
 
     rec.close()
-    print("\n✅ DeepSeek 集成可用. 现在可以:")
-    print("   python scripts/chat.py --provider deepseek \\")
+    print(f"\n✅ {args.provider} 集成可用. 现在可以:")
+    print(f"   python scripts/chat.py --provider {args.provider} \\")
     print("       --statutes-collection ma_statutes \\")
     print("       --statutes-sparse data/indexes/statutes_sparse.json")
     return 0

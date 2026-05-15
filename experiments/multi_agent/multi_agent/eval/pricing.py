@@ -10,6 +10,12 @@ MODEL_PRICING_PER_M_TOKENS: dict[str, dict[str, float]] = {
     # DeepSeek (api.deepseek.com 公布价, 标准时段)
     "deepseek-chat":             {"input":  0.27, "output":  1.10, "cache_read": 0.07},
     "deepseek-reasoner":         {"input":  0.55, "output":  2.19, "cache_read": 0.14},
+    # SiliconFlow (api.siliconflow.cn, 折合 USD; ~7.2 CNY/USD)
+    "deepseek-ai/DeepSeek-V3.1":      {"input": 0.28, "output": 1.11, "cache_read": 0.0},
+    "deepseek-ai/DeepSeek-V3.1-Terminus": {"input": 0.28, "output": 1.11, "cache_read": 0.0},
+    "deepseek-ai/DeepSeek-V4-Flash":   {"input": 0.14, "output": 0.55, "cache_read": 0.0},
+    "deepseek-ai/DeepSeek-R1":         {"input": 0.55, "output": 2.20, "cache_read": 0.0},
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": {"input": 0.30, "output": 1.20, "cache_read": 0.0},
     # Local self-hosted — 零边际
     "qwen3.5-9b":                {"input":  0.00, "output":  0.00, "cache_read": 0.00},
 }

@@ -59,7 +59,8 @@ _CHUNKS = [
 async def main() -> int:
     import argparse, os
     p = argparse.ArgumentParser(description="Benchmark synthetic_seed_v1 × Lawyer+Supervisor")
-    p.add_argument("--provider", choices=["local", "deepseek"], default="local")
+    p.add_argument("--provider",
+                   choices=["local", "deepseek", "siliconflow"], default="local")
     p.add_argument("--model", default=None,
                    help="默认: local=qwen3.5-9b / deepseek=deepseek-chat")
     args = p.parse_args()
@@ -95,6 +96,16 @@ async def main() -> int:
         )
         model_name = args.model or "deepseek-chat"
         print(f"Provider: DeepSeek  model={model_name}")
+    elif args.provider == "siliconflow":
+        api_key = os.environ.get("SILICONFLOW_API_KEY")
+        if not api_key:
+            print("❌ --provider siliconflow 但 SILICONFLOW_API_KEY 未设置")
+            return 1
+        provider = OpenAICompatibleProvider(
+            base_url="https://api.siliconflow.cn/v1", api_key=api_key,
+        )
+        model_name = args.model or "deepseek-ai/DeepSeek-V4-Flash"
+        print(f"Provider: SiliconFlow  model={model_name}")
     else:
         provider = OpenAICompatibleProvider()
         model_name = args.model or "qwen3.5-9b"

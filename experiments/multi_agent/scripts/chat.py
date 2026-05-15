@@ -155,22 +155,31 @@ async def chat_loop(args) -> int:
         default_session_id=session_id,
     )
 
-    # Provider 选择 — local Qwen / DeepSeek
+    # Provider 选择 — local Qwen / DeepSeek / SiliconFlow
+    import os
     if args.provider == "deepseek":
-        import os
         api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             print("❌ --provider deepseek 但环境变量 DEEPSEEK_API_KEY 未设置")
-            print("   export DEEPSEEK_API_KEY=sk-xxx  然后重跑")
             return 1
         provider = OpenAICompatibleProvider(
-            base_url="https://api.deepseek.com/v1",
-            api_key=api_key,
+            base_url="https://api.deepseek.com/v1", api_key=api_key,
         )
         model_name = args.model or "deepseek-chat"
         print(f"Provider: DeepSeek API  model={model_name}")
+    elif args.provider == "siliconflow":
+        api_key = os.environ.get("SILICONFLOW_API_KEY")
+        if not api_key:
+            print("❌ --provider siliconflow 但环境变量 SILICONFLOW_API_KEY 未设置")
+            print("   export SILICONFLOW_API_KEY=sk-xxx  (https://cloud.siliconflow.cn)")
+            return 1
+        provider = OpenAICompatibleProvider(
+            base_url="https://api.siliconflow.cn/v1", api_key=api_key,
+        )
+        model_name = args.model or "deepseek-ai/DeepSeek-V4-Flash"
+        print(f"Provider: SiliconFlow API  model={model_name}")
     else:
-        provider = OpenAICompatibleProvider()  # 默认本地 vLLM
+        provider = OpenAICompatibleProvider()
         model_name = args.model or "qwen3.5-9b"
         print(f"Provider: 本地 vLLM  model={model_name}")
 
@@ -308,8 +317,9 @@ def main() -> int:
                    help="trace 目录 (默认 ./runs)")
     p.add_argument("--specialty", default="民事",
                    help="律师专业方向 民事/交通/婚姻/房产/劳动/通用 (默认 民事)")
-    p.add_argument("--provider", choices=["local", "deepseek"], default="local",
-                   help="LLM provider: local (vLLM Qwen, 默认) 或 deepseek (api.deepseek.com)")
+    p.add_argument("--provider",
+                   choices=["local", "deepseek", "siliconflow"], default="local",
+                   help="LLM provider: local (vLLM Qwen, 默认) / deepseek (官方) / siliconflow (硅基流动)")
     p.add_argument("--model", default=None,
                    help="模型名 (默认: local=qwen3.5-9b / deepseek=deepseek-chat)")
     p.add_argument("--no-supervisor", action="store_true",
