@@ -109,8 +109,10 @@ def _print_answer(result: dict, *, with_supervisor: bool) -> None:
         ]:
             v = (five.get(key) or "").strip()
             if v:
+                # 去掉模型自带的 "【段名】" 前缀, 避免与我们手动的标题重复
+                import re
+                v = re.sub(r"^[【\[]" + re.escape(label) + r"[】\]]\s*", "", v).strip()
                 print(f"\n  【{label}】")
-                # 缩进每行
                 for line in v.split("\n"):
                     print(f"    {line}")
 
