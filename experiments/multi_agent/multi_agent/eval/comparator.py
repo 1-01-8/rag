@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,10 +22,12 @@ class PerQueryDelta(BaseModel):
     latency_delta_ms: int = 0
     in_tokens_delta: int = 0
     out_tokens_delta: int = 0
+    cost_delta_usd: float | None = None
     citation_hit_a: bool = False
     citation_hit_b: bool = False
     groundedness_delta: float | None = None
     helpfulness_delta: float | None = None
+    winner: Literal["A", "B", "tie"] = "tie"
 
 
 class ComparisonReport(BaseModel):
@@ -36,6 +39,30 @@ class ComparisonReport(BaseModel):
     n_b: int
     n_common: int
     per_query: list[PerQueryDelta] = Field(default_factory=list)
+    winners_a: int = 0
+    winners_b: int = 0
+    ties: int = 0
+
+
+def _pick_winner(
+    groundedness_delta: float | None,
+    helpfulness_delta: float | None,
+    citation_hit_a: bool,
+    citation_hit_b: bool,
+) -> Literal["A", "B", "tie"]:
+    """Heuristic per-query winner.
+
+    Priority order: groundedness > citation_hit > helpfulness. A meaningful
+    difference in groundedness (|Δ| >= 0.05) wins; otherwise an exclusive
+    citation hit wins; otherwise a meaningful helpfulness gap wins; else tie.
+    """
+    if groundedness_delta is not None and abs(groundedness_delta) >= 0.05:
+        return "B" if groundedness_delta > 0 else "A"
+    if citation_hit_a != citation_hit_b:
+        return "A" if citation_hit_a else "B"
+    if helpfulness_delta is not None and abs(helpfulness_delta) >= 0.05:
+        return "B" if helpfulness_delta > 0 else "A"
+    return "tie"
 
 
 class Comparator:
@@ -98,6 +125,16 @@ class Comparator:
             if ja_h.get("score") is not None and jb_h.get("score") is not None:
                 helpfulness_delta = float(jb_h["score"]) - float(ja_h["score"])
 
+            cost_a = ma.get("cost_usd")
+            cost_b = mb.get("cost_usd")
+            cost_delta: float | None = None
+            if cost_a is not None and cost_b is not None:
+                cost_delta = round(float(cost_b) - float(cost_a), 6)
+
+            cit_a = bool((ra.get("citation_judge") or {}).get("hit"))
+            cit_b = bool((rb.get("citation_judge") or {}).get("hit"))
+            winner = _pick_winner(groundedness_delta, helpfulness_delta, cit_a, cit_b)
+
             per_q.append(
                 PerQueryDelta(
                     query_id=qid,
@@ -110,13 +147,18 @@ class Comparator:
                     out_tokens_delta=(
                         mb.get("total_output_tokens", 0) - ma.get("total_output_tokens", 0)
                     ),
-                    citation_hit_a=bool((ra.get("citation_judge") or {}).get("hit")),
-                    citation_hit_b=bool((rb.get("citation_judge") or {}).get("hit")),
+                    cost_delta_usd=cost_delta,
+                    citation_hit_a=cit_a,
+                    citation_hit_b=cit_b,
                     groundedness_delta=groundedness_delta,
                     helpfulness_delta=helpfulness_delta,
+                    winner=winner,
                 )
             )
 
+        winners_a = sum(1 for p in per_q if p.winner == "A")
+        winners_b = sum(1 for p in per_q if p.winner == "B")
+        ties = sum(1 for p in per_q if p.winner == "tie")
         return ComparisonReport(
             group_a=Path(group_a_dir).name,
             group_b=Path(group_b_dir).name,
@@ -124,6 +166,9 @@ class Comparator:
             n_b=len(b),
             n_common=len(common),
             per_query=per_q,
+            winners_a=winners_a,
+            winners_b=winners_b,
+            ties=ties,
         )
 
     def render_md(self, report: ComparisonReport, out_dir: Path) -> Path:
@@ -138,19 +183,21 @@ class Comparator:
             f"- **Group B:** `{report.group_b}` ({report.n_b} queries)",
             f"- **Common queries:** {report.n_common}",
             "",
-            "| Query | Δlat ms | Δin tok | Δout tok | Cite A | Cite B"
-            " | Δgrounded | Δhelpful |",
-            "|---|---|---|---|---|---|---|---|",
+            "| Query | Δlat ms | Δin tok | Δout tok | Δcost $ | Cite A | Cite B"
+            " | Δgrounded | Δhelpful | Winner |",
+            "|---|---|---|---|---|---|---|---|---|---|",
         ]
 
         for p in report.per_query:
             g_str = f"{p.groundedness_delta:+.2f}" if p.groundedness_delta is not None else "—"
             h_str = f"{p.helpfulness_delta:+.2f}" if p.helpfulness_delta is not None else "—"
+            c_str = f"{p.cost_delta_usd:+.4f}" if p.cost_delta_usd is not None else "—"
             cite_a = "✓" if p.citation_hit_a else "✗"
             cite_b = "✓" if p.citation_hit_b else "✗"
             lines.append(
                 f"| {p.query_id} | {p.latency_delta_ms:+d} | {p.in_tokens_delta:+d} |"
-                f" {p.out_tokens_delta:+d} | {cite_a} | {cite_b} | {g_str} | {h_str} |"
+                f" {p.out_tokens_delta:+d} | {c_str} | {cite_a} | {cite_b} | {g_str} | {h_str}"
+                f" | {p.winner} |"
             )
 
         # Summary stats (averages over non-None deltas)

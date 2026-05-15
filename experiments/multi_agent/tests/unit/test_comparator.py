@@ -13,24 +13,28 @@ def _make_row(
     groundedness_score: float | None = None,
     helpfulness_score: float | None = None,
     citation_hit: bool = True,
+    cost_usd: float | None = None,
 ) -> dict:
+    metrics: dict = {
+        "total_latency_ms": latency_ms,
+        "total_input_tokens": 800,
+        "total_output_tokens": 200,
+        "cache_read_tokens": 0,
+        "cache_hit_rate": 0,
+        "agent_invocations": 1,
+        "tool_calls_total": 2,
+        "react_steps_total": 0,
+        "errors": 0,
+        "final_answer_mode": "evidence_grounded",
+        "citation_count": 1,
+        "supervisor_verdict": None,
+    }
+    if cost_usd is not None:
+        metrics["cost_usd"] = cost_usd
     row: dict = {
         "query_id": query_id,
         "status": "ok",
-        "metrics": {
-            "total_latency_ms": latency_ms,
-            "total_input_tokens": 800,
-            "total_output_tokens": 200,
-            "cache_read_tokens": 0,
-            "cache_hit_rate": 0,
-            "agent_invocations": 1,
-            "tool_calls_total": 2,
-            "react_steps_total": 0,
-            "errors": 0,
-            "final_answer_mode": "evidence_grounded",
-            "citation_count": 1,
-            "supervisor_verdict": None,
-        },
+        "metrics": metrics,
         "citation_judge": {
             "hit": citation_hit,
             "matched": ["民法典-510"],
@@ -122,6 +126,70 @@ def test_render_md_produces_nonempty_file(tmp_path: Path) -> None:
     assert "group_beta" in content
     # Row for q1 present
     assert "q1" in content
+
+
+def test_comparator_cost_delta_and_winner(tmp_path: Path) -> None:
+    """Cost delta computed; winner derived from groundedness gap when ≥0.05."""
+    ga = tmp_path / "ga"
+    gb = tmp_path / "gb"
+    ga.mkdir()
+    gb.mkdir()
+
+    # A: cheap (Qwen, $0); B: pricey (Claude, $0.05). B has worse groundedness → A wins.
+    row_a = _make_row("q1", latency_ms=1000, groundedness_score=0.90,
+                      helpfulness_score=0.80, citation_hit=True, cost_usd=0.0)
+    row_b = _make_row("q1", latency_ms=1500, groundedness_score=0.70,
+                      helpfulness_score=0.80, citation_hit=True, cost_usd=0.05)
+    (ga / "results.jsonl").write_text(json.dumps(row_a, ensure_ascii=False) + "\n", encoding="utf-8")
+    (gb / "results.jsonl").write_text(json.dumps(row_b, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    from multi_agent.eval.comparator import Comparator
+
+    report = Comparator().compare(group_a_dir=ga, group_b_dir=gb)
+    p = report.per_query[0]
+    assert p.cost_delta_usd == pytest.approx(0.05)
+    assert p.winner == "A"
+    assert report.winners_a == 1
+    assert report.winners_b == 0
+    assert report.ties == 0
+
+
+def test_comparator_winner_tie_when_gaps_below_threshold(tmp_path: Path) -> None:
+    ga = tmp_path / "ga"
+    gb = tmp_path / "gb"
+    ga.mkdir()
+    gb.mkdir()
+    # Δgroundedness = -0.01 (below 0.05 threshold), same citation, helpfulness equal → tie
+    row_a = _make_row("q1", latency_ms=1000, groundedness_score=0.86,
+                      helpfulness_score=0.80, citation_hit=True)
+    row_b = _make_row("q1", latency_ms=1100, groundedness_score=0.85,
+                      helpfulness_score=0.80, citation_hit=True)
+    (ga / "results.jsonl").write_text(json.dumps(row_a, ensure_ascii=False) + "\n", encoding="utf-8")
+    (gb / "results.jsonl").write_text(json.dumps(row_b, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    from multi_agent.eval.comparator import Comparator
+
+    report = Comparator().compare(group_a_dir=ga, group_b_dir=gb)
+    assert report.per_query[0].winner == "tie"
+    assert report.ties == 1
+
+
+def test_comparator_winner_citation_hit_breaks_tie(tmp_path: Path) -> None:
+    """When groundedness scores not available, citation hit decides."""
+    ga = tmp_path / "ga"
+    gb = tmp_path / "gb"
+    ga.mkdir()
+    gb.mkdir()
+    row_a = _make_row("q1", latency_ms=1000, citation_hit=False)
+    row_b = _make_row("q1", latency_ms=1000, citation_hit=True)
+    (ga / "results.jsonl").write_text(json.dumps(row_a, ensure_ascii=False) + "\n", encoding="utf-8")
+    (gb / "results.jsonl").write_text(json.dumps(row_b, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    from multi_agent.eval.comparator import Comparator
+
+    report = Comparator().compare(group_a_dir=ga, group_b_dir=gb)
+    assert report.per_query[0].winner == "B"
+    assert report.winners_b == 1
 
 
 def test_comparator_no_common_queries(tmp_path: Path) -> None:
