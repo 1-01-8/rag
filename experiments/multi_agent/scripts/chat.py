@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -157,6 +158,11 @@ async def chat_loop(args) -> int:
     provider = OpenAICompatibleProvider()
     statute_search = StatuteSearchTool(collection_name=coll, sparse_artifact_path=sparse)
 
+    # 预热 statute_search 的 lazy encoder, 避免首次问问题时再触发 Loading weights
+    print("预热检索器... ", end="", flush=True)
+    statute_search._ensure_encoders()  # 强制加载 bge-m3 + sparse
+    print("ok")
+
     print(f"会话 session_id = {session_id}")
     print(f"记忆目录: {Path(args.memory_root).resolve()}")
     print(f"Supervisor: {'开启' if not args.no_supervisor else '关闭'}")
@@ -185,7 +191,20 @@ async def chat_loop(args) -> int:
             if not question or question.lower() in {"exit", "quit", "q"}:
                 break
             turn += 1
-            print(f"\n[Turn {turn}] 处理中...", flush=True)
+            print(f"\n[Turn {turn}] 处理中 (Lawyer → Supervisor, 约 60-120s)... ",
+                  end="", flush=True)
+
+            # 心跳 task: 每 5 秒打点表示还活着
+            stop_heartbeat = asyncio.Event()
+            async def _heartbeat():
+                t0 = time.time()
+                while not stop_heartbeat.is_set():
+                    try:
+                        await asyncio.wait_for(stop_heartbeat.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        elapsed = int(time.time() - t0)
+                        print(f".{elapsed}s", end="", flush=True)
+            hb = asyncio.create_task(_heartbeat())
 
             tools_for_lawyer = [statute_search]
             if turn > 1:
@@ -242,6 +261,12 @@ async def chat_loop(args) -> int:
             except Exception as e:
                 print(f"\n❌ 错误: {type(e).__name__}: {e}")
                 continue
+            finally:
+                stop_heartbeat.set()
+                try:
+                    await hb
+                except Exception:
+                    pass
     finally:
         if cleanup_coll:
             drop_collection(cleanup_coll)
