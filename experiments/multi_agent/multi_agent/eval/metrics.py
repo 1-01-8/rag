@@ -88,11 +88,31 @@ def derive_run_metrics(run_dir: Path) -> RunMetrics:
             start_ts = ts
         elif event_type == "RunFinished":
             end_ts = ts
+            # Phase 5q: parse final_answer JSON to populate answer_mode + citation_count
+            fa = e.get("final_answer")
+            if fa:
+                try:
+                    payload = json.loads(fa) if isinstance(fa, str) else fa
+                    if isinstance(payload, dict):
+                        if not m.final_answer_mode:
+                            m.final_answer_mode = payload.get("mode")
+                        cits = payload.get("citations")
+                        if isinstance(cits, list):
+                            m.citation_count = len(cits)
+                except (json.JSONDecodeError, TypeError):
+                    pass
             # Do not count RunFinished.status as an independent error —
             # it typically reflects a downstream tool/agent failure already counted.
 
         elif event_type == "AgentInvoked":
             m.agent_invocations += 1
+
+        elif event_type == "AgentResponded":
+            # Phase 5q: each AgentResponded marks one completed ReAct cycle for
+            # the agent. Use it as the proxy for "react steps". (LLMRequested
+            # would over-count because tool-call retries fire multiple LLM rounds
+            # per logical step.)
+            m.react_steps_total += 1
 
         elif event_type == "ToolCalled":
             m.tool_calls_total += 1
