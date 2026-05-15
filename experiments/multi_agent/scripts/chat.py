@@ -220,7 +220,9 @@ async def chat_loop(args) -> int:
         provider = OpenAICompatibleProvider(
             base_url="https://api.siliconflow.cn/v1", api_key=api_key,
         )
-        model_name = args.model or "deepseek-ai/DeepSeek-V4-Flash"
+        # 默认 V3.1 — V4-Flash 单次 LLM call 偶尔挂 100s+, 实测不稳定;
+        # V3.1 单次 5-15s 稳定, 是 SiliconFlow 上 DeepSeek 系列已知可用的默认.
+        model_name = args.model or "deepseek-ai/DeepSeek-V3.1"
         print(f"Provider: SiliconFlow API  model={model_name}")
     else:
         provider = OpenAICompatibleProvider()
