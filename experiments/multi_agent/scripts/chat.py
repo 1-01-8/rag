@@ -245,7 +245,9 @@ async def chat_loop(args) -> int:
                             name="lawyer", role="advisor", provider=p, recorder=r,
                             tools=tools_for_lawyer,
                             model=model_name, specialty=args.specialty,
-                            max_steps=6, max_tool_calls=8, max_pre_tool_rejections=2,
+                            max_steps=args.max_steps,
+                            max_tool_calls=args.max_tool_calls,
+                            max_pre_tool_rejections=2,
                         ),
                         provider=provider, runs_root=runs_root,
                         session_id=session_id, memory_store=store,
@@ -259,7 +261,9 @@ async def chat_loop(args) -> int:
                             name="lawyer", role="advisor", provider=p, recorder=r,
                             tools=tools_for_lawyer,
                             model=model_name, specialty=args.specialty,
-                            max_steps=6, max_tool_calls=8, max_pre_tool_rejections=2,
+                            max_steps=args.max_steps,
+                            max_tool_calls=args.max_tool_calls,
+                            max_pre_tool_rejections=2,
                         ),
                         supervisor_factory=lambda p, r: SupervisorAgent(
                             name="supervisor", role="qa", provider=p, recorder=r,
@@ -322,6 +326,10 @@ def main() -> int:
                    help="LLM provider: local (vLLM Qwen, 默认) / deepseek (官方) / siliconflow (硅基流动)")
     p.add_argument("--model", default=None,
                    help="模型名 (默认: local=qwen3.5-9b / deepseek=deepseek-chat)")
+    p.add_argument("--max-steps", type=int, default=4,
+                   help="Lawyer ReAct 最多步数 (默认 4)")
+    p.add_argument("--max-tool-calls", type=int, default=4,
+                   help="Lawyer 最多工具调用数 (默认 4, 避免 LLM 反复 search)")
     p.add_argument("--no-supervisor", action="store_true",
                    help="跳过审核员加速 (但失去引用真实性校验)")
     args = p.parse_args()
