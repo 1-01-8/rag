@@ -32,6 +32,7 @@ class RunMetrics(BaseModel):
     final_answer_mode: str | None = None
     citation_count: int = 0
     errors: int = 0
+    cost_usd: float = 0.0
 
 
 def _parse_ts(ts_str: str) -> datetime:
@@ -56,9 +57,13 @@ def derive_run_metrics(run_dir: Path) -> RunMetrics:
     if not events_path.exists():
         raise FileNotFoundError(events_path)
 
+    from multi_agent.eval.pricing import compute_cost_usd
+
     m = RunMetrics()
     start_ts: datetime | None = None
     end_ts: datetime | None = None
+    model_by_request_id: dict[str, str] = {}
+    per_model_usage: dict[str, dict[str, int]] = {}
 
     for line in events_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -97,11 +102,26 @@ def derive_run_metrics(run_dir: Path) -> RunMetrics:
             if e.get("error"):
                 m.errors += 1
 
+        elif event_type == "LLMRequested":
+            rid = e.get("event_id")
+            model = e.get("model", "")
+            if rid and model:
+                model_by_request_id[rid] = model
+
         elif event_type == "LLMResponded":
             usage = e.get("usage") or {}
             m.total_input_tokens += usage.get("input_tokens", 0) or 0
             m.total_output_tokens += usage.get("output_tokens", 0) or 0
             m.cache_read_tokens += usage.get("cache_read_tokens", 0) or 0
+            parent = e.get("parent_id")
+            model = model_by_request_id.get(parent, "") if parent else ""
+            if model:
+                bucket = per_model_usage.setdefault(
+                    model, {"input": 0, "output": 0, "cache_read": 0}
+                )
+                bucket["input"] += usage.get("input_tokens", 0) or 0
+                bucket["output"] += usage.get("output_tokens", 0) or 0
+                bucket["cache_read"] += usage.get("cache_read_tokens", 0) or 0
 
         elif event_type == "SupervisorVerdict":
             m.supervisor_verdict = e.get("verdict")
@@ -114,5 +134,16 @@ def derive_run_metrics(run_dir: Path) -> RunMetrics:
     # Cache hit rate = cache_read_tokens / total_input_tokens
     if m.total_input_tokens > 0:
         m.cache_hit_rate = m.cache_read_tokens / m.total_input_tokens
+
+    # Derive total cost from per-model token usage
+    total_cost = 0.0
+    for model, u in per_model_usage.items():
+        total_cost += compute_cost_usd(
+            model=model,
+            input_tokens=u["input"],
+            output_tokens=u["output"],
+            cache_read_tokens=u["cache_read"],
+        )
+    m.cost_usd = round(total_cost, 6)
 
     return m

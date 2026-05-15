@@ -157,3 +157,31 @@ def test_derive_metrics_missing_events_file(tmp_path):
     run_dir.mkdir()
     with pytest.raises(FileNotFoundError):
         derive_run_metrics(run_dir)
+
+
+def test_derive_metrics_computes_cost_per_model(tmp_path):
+    """Token cost attributed to the model from the parent LLMRequested event."""
+    run_dir = tmp_path / "run-cost"
+    run_dir.mkdir()
+    events = [
+        {"event_id": "1", "event_type": "RunStarted",
+         "timestamp": "2026-05-15T00:00:00", "run_id": "x", "parent_id": None,
+         "query": "q", "config": {}},
+        {"event_id": "L1", "event_type": "LLMRequested",
+         "timestamp": "2026-05-15T00:00:00", "run_id": "x", "parent_id": "1",
+         "provider": "anthropic", "model": "claude-opus-4-7",
+         "messages": [], "params": {}},
+        {"event_id": "L1e", "event_type": "LLMResponded",
+         "timestamp": "2026-05-15T00:00:01", "run_id": "x", "parent_id": "L1",
+         "raw_response": "", "duration_ms": 1000, "finish_reason": "end_turn",
+         "usage": {"input_tokens": 100000, "output_tokens": 50000, "cache_read_tokens": 0}},
+        {"event_id": "2", "event_type": "RunFinished",
+         "timestamp": "2026-05-15T00:00:02", "run_id": "x", "parent_id": "1",
+         "status": "ok", "final_answer": None, "error": None},
+    ]
+    import json
+    (run_dir / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events))
+    from multi_agent.eval.metrics import derive_run_metrics
+    m = derive_run_metrics(run_dir)
+    # 100k tokens input × $15/M + 50k output × $75/M = 1.50 + 3.75 = 5.25
+    assert m.cost_usd == pytest.approx(5.25, rel=0.01)

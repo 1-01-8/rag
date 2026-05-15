@@ -19,6 +19,7 @@ def render_summary_md(group_dir: Path) -> Path:
     in_tok = sum(r["metrics"].get("total_input_tokens", 0) for r in ok)
     out_tok = sum(r["metrics"].get("total_output_tokens", 0) for r in ok)
     cache_in = sum(r["metrics"].get("cache_read_tokens", 0) for r in ok)
+    total_cost_usd = sum(r["metrics"].get("cost_usd", 0.0) for r in ok)
     citation_hits = sum(1 for r in ok if r.get("citation_judge", {}).get("hit"))
     citation_scored = sum(
         1 for r in ok if not r.get("citation_judge", {}).get("skipped", True)
@@ -55,6 +56,7 @@ def render_summary_md(group_dir: Path) -> Path:
             f"- Tokens: input={in_tok}, output={out_tok}, cache_read={cache_in},"
             f" hit_rate={cache_in / in_tok if in_tok else 0:.2f}"
         ),
+        f"- 总成本 total cost: ${total_cost_usd:.2f}",
         (
             f"- Citation accuracy: **{citation_hits}/{citation_scored}**"
             f" ({100 * citation_hits / citation_scored if citation_scored else 0:.0f}%)"
