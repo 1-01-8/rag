@@ -18,6 +18,7 @@ async def run_query(
     config: dict[str, Any] | None = None,
     session_id: str | None = None,
     memory_store=None,
+    turn_indexer=None,
 ) -> dict:
     """Top-level entry. Guarantees a RunFinished event regardless of outcome.
 
@@ -72,7 +73,7 @@ async def run_query(
             sticky.linked_runs.append(run_id)
         existing_turns = memory_store.recent_turns(session_id, n=999)
         next_turn_no = max((t.turn for t in existing_turns), default=0) + 1
-        memory_store.append_turn(session_id, Turn(
+        turn = Turn(
             turn=next_turn_no,
             run_id=run_id,
             started_at=started_at,
@@ -80,7 +81,10 @@ async def run_query(
             question=query,
             final_answer=final_answer or "",
             agents_invoked=[agent.name] if agent is not None else [],
-        ))
+        )
+        memory_store.append_turn(session_id, turn)
+        if turn_indexer is not None:
+            await turn_indexer.index_turn(session_id=session_id, turn=turn)
         memory_store.write_sticky(sticky)
 
     return result
