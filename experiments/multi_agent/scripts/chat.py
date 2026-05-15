@@ -264,6 +264,8 @@ async def chat_loop(args) -> int:
             turn += 1
             print(f"\n[Turn {turn}] 处理中 (Lawyer → Supervisor, 约 60-120s)... ",
                   end="", flush=True)
+            # 提示用户停滞超过 90 秒就 Ctrl-C 换模型
+            stall_warned = False
 
             # 心跳: 每 5 秒打活体信号 + 当前 run 的 LLM/Tool 次数
             stop_heartbeat = asyncio.Event()
@@ -292,7 +294,12 @@ async def chat_loop(args) -> int:
                                         tool_n += 1
                         except Exception:
                             pass
-                        print(f" {elapsed}s(L{llm_n}/T{tool_n})", end="", flush=True)
+                        nonlocal stall_warned
+                        warn = ""
+                        if elapsed >= 90 and not stall_warned:
+                            warn = "  ⚠️ 服务端慢/卡, 可 Ctrl-C 重试或换 --model deepseek-ai/DeepSeek-V3.1"
+                            stall_warned = True
+                        print(f" {elapsed}s(L{llm_n}/T{tool_n}){warn}", end="", flush=True)
             hb = asyncio.create_task(_heartbeat())
 
             tools_for_lawyer = [statute_search]
