@@ -31,6 +31,11 @@ def main() -> None:
         "--limit", type=int, default=0,
         help="Only index first N law files (0 = all). Useful for smoke testing.",
     )
+    parser.add_argument(
+        "--batch-size", type=int, default=16,
+        help="Chunk batch size sent to dense encoder (default 16; "
+             "reduce to 8/4 on CUDA illegal-memory errors).",
+    )
     args = parser.parse_args()
 
     t0 = time.monotonic()
@@ -55,6 +60,7 @@ def main() -> None:
         collection_name=args.collection,
         sparse_artifact_path=args.sparse_out,
         dense_encoder=encoder,
+        batch_size=args.batch_size,
     )
     elapsed = time.monotonic() - t0
     print(f"Done in {elapsed:.1f}s. Sparse vocab saved to {artifacts.sparse_artifact_path}")

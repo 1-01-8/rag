@@ -71,7 +71,11 @@ def build_index(
     # 3. Encode + upsert in batches.
     for start in range(0, len(chunks), batch_size):
         batch = chunks[start : start + batch_size]
-        dense_vecs = dense_encoder.encode_batch([c.embedding_text() for c in batch])
+        # Pass batch_size to encode_batch so sentence-transformers doesn't
+        # split into a larger internal batch and OOM the GPU.
+        dense_vecs = dense_encoder.encode_batch(
+            [c.embedding_text() for c in batch], batch_size=batch_size,
+        )
         points = []
         for chunk, dense_vec in zip(batch, dense_vecs):
             sparse_vec = sparse_enc.encode(chunk.text)
