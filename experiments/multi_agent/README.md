@@ -1,8 +1,65 @@
 # Multi-Agent Legal RAG (experimental)
 
-Phase 1: walking skeleton — trace system + stub agent + asyncio.
-
 See `docs/superpowers/specs/2026-05-14-multi-agent-experiment-design.md` for full design.
+For operator workflows / scripts / trace events 见 `RUNBOOK.md`.
+
+---
+
+## 🚀 已验证可用的快速启动 (推荐)
+
+```bash
+# 一次性配 (~/.bashrc 加这两行)
+export SILICONFLOW_API_KEY=sk-你的key
+conda activate qwen35
+
+# 启动 chat — 进入交互 REPL, 输入问题即可
+cd /home/xxm/rag/experiments/multi_agent
+bash scripts/chat-ready.sh
+```
+
+### 配置内容 (打包在 `chat-ready.sh` 内)
+
+| 项 | 值 | 备注 |
+|---|---|---|
+| Provider | `siliconflow` (api.siliconflow.cn) | 在日本可达; DeepSeek 官方 API 区域限制 |
+| Model | `deepseek-ai/DeepSeek-V3.1` | 实测稳定 5-15s/LLM call; V4-Flash 偶尔挂 100s+ |
+| 索引 | `ma_statutes` (13722 chunks) | 177 部 Chinese-Laws/extracted/ 灌好 |
+| Sparse | `data/indexes/statutes_sparse.json` | 跟 Qdrant collection 配对 |
+| Supervisor | 关闭 | 省 25-30s/轮; 需审核可去掉 `--no-supervisor` |
+| 单轮时间 | **30-60 秒** | 含 ReAct 3-4 步 |
+| 单轮成本 | **~$0.003** (¥0.02) | DeepSeek-V3.1 折合人民币 |
+
+### 常用变体
+
+```bash
+# 劳动咨询 (corpus 未收录劳动合同法, prompt 自带 fallback)
+bash scripts/chat-ready.sh --specialty 劳动
+
+# 续上次会话
+bash scripts/chat-ready.sh --session-id chat_xxxxxx
+
+# 严格审核 (慢 25s 但有引用真实性校验) — 直接调 chat.py
+python scripts/chat.py --provider siliconflow \
+    --statutes-collection ma_statutes \
+    --statutes-sparse data/indexes/statutes_sparse.json
+```
+
+### 启动前自检
+
+`chat-ready.sh` 自动校验:
+- `SILICONFLOW_API_KEY` 环境变量
+- `data/indexes/statutes_sparse.json` 索引文件存在
+
+任一缺失会给清晰错误 + 修复指令.
+
+### 不在路径里的情况
+
+- 想用**本地 Qwen 3.5-9B** (vLLM 在 GPU 3): `--provider local`. 单轮 100-150 秒, $0 成本, 但稳定.
+- 想用**真 DeepSeek 官方 API**: `--provider deepseek` (在日本不可达, 需 VPN).
+- 想跑**批量 benchmark**: `python scripts/benchmark.py --provider siliconflow`
+- 想看**单 run 的延迟 flame**: `python scripts/profile_run.py runs/r_XXX`
+
+---
 
 ## Run tests
 ```
