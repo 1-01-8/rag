@@ -16,7 +16,8 @@ import sys
 from pathlib import Path
 
 from multi_agent.providers.openai_compatible import OpenAICompatibleProvider
-from multi_agent.schemas.messages import AgentMessage, ToolSpec
+from multi_agent.providers.base import ToolSpec
+from multi_agent.schemas.messages import AgentMessage
 from multi_agent.tracing.recorder import Recorder
 
 
