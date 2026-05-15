@@ -247,7 +247,7 @@ async def chat_loop(args) -> int:
             print(f"\n[Turn {turn}] 处理中 (Lawyer → Supervisor, 约 60-120s)... ",
                   end="", flush=True)
 
-            # 心跳 task: 每 5 秒打点表示还活着
+            # 心跳: 每 5 秒打活体信号 + 当前 run 的 LLM/Tool 次数
             stop_heartbeat = asyncio.Event()
             async def _heartbeat():
                 t0 = time.time()
@@ -256,7 +256,25 @@ async def chat_loop(args) -> int:
                         await asyncio.wait_for(stop_heartbeat.wait(), timeout=5.0)
                     except asyncio.TimeoutError:
                         elapsed = int(time.time() - t0)
-                        print(f".{elapsed}s", end="", flush=True)
+                        # 从最新 run 目录数 LLM/Tool 次数
+                        llm_n = tool_n = 0
+                        try:
+                            latest = sorted(
+                                Path(runs_root).glob("r_*"), key=lambda p: p.stat().st_mtime, reverse=True,
+                            )[:1]
+                            if latest and (latest[0] / "events.jsonl").exists():
+                                for line in (latest[0] / "events.jsonl").read_text(encoding="utf-8").splitlines():
+                                    try:
+                                        e = json.loads(line)
+                                    except Exception:
+                                        continue
+                                    if e.get("event_type") == "LLMRequested":
+                                        llm_n += 1
+                                    elif e.get("event_type") == "ToolCalled":
+                                        tool_n += 1
+                        except Exception:
+                            pass
+                        print(f" {elapsed}s(L{llm_n}/T{tool_n})", end="", flush=True)
             hb = asyncio.create_task(_heartbeat())
 
             tools_for_lawyer = [statute_search]
