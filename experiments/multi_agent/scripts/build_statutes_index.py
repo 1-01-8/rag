@@ -34,10 +34,19 @@ def main() -> None:
     args = parser.parse_args()
 
     t0 = time.monotonic()
+    if not args.corpus_dir.exists():
+        raise SystemExit(f"❌ corpus-dir 不存在: {args.corpus_dir}")
     docs = load_corpus(args.corpus_dir)
     if args.limit:
         docs = docs[: args.limit]
     n_chunks = sum(len(d.chunks) for d in docs)
+    if not docs:
+        raise SystemExit(
+            f"❌ 在 {args.corpus_dir} 没找到任何法律文件。\n"
+            f"   load_corpus 期待目录下直接是 .txt 法律文件 "
+            f"(例如 /home/xxm/rag/Chinese-Laws/extracted/)。\n"
+            f"   验证: ls {args.corpus_dir}/*.txt | head"
+        )
     print(f"Loaded {len(docs)} laws, {n_chunks} chunks. Encoding...")
 
     encoder = DenseEncoder()
