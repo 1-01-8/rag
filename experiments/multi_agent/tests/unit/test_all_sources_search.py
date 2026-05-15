@@ -1,15 +1,18 @@
 import uuid
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from multi_agent.schemas.document import Document, Chunk
 from multi_agent.schemas.case import CaseQA
 from multi_agent.schemas.evidence import Evidence
+from multi_agent.schemas.messages import ToolResult
 from multi_agent.tools.retrievers.qdrant_client import drop_collection
 from multi_agent.tools.retrievers.dense_encoder import DenseEncoder
 from multi_agent.tools.retrievers.index_builder import build_index
 from multi_agent.tools.retrievers.all_sources_search import (
     AllSourcesSearchTool, AllSourcesArgs, _rrf_merge,
 )
+from multi_agent.tools.retrievers.history_search import HistorySearchTool
 from multi_agent.tracing.recorder import Recorder
 
 
@@ -97,3 +100,74 @@ def test_rrf_merge_namespaces_by_retriever():
     retrievers = {e.retriever for e in fused}
     assert "hybrid" in retrievers
     assert "case" in retrievers
+
+
+# ---------------------------------------------------------------------------
+# Phase 5k: include_history tests (mock-based, no real Qdrant history needed)
+# ---------------------------------------------------------------------------
+
+def _make_tool(both_indexes, history_search=None):
+    return AllSourcesSearchTool(
+        statutes_collection=both_indexes["statutes"],
+        statutes_sparse=both_indexes["statutes_sparse"],
+        cases_collection=both_indexes["cases"],
+        cases_sparse=both_indexes["cases_sparse"],
+        history_search=history_search,
+    )
+
+
+@pytest.mark.asyncio
+async def test_all_sources_without_history(both_indexes, tmp_run_dir):
+    """include_history=False → no history_hits key in payload, even if history_search is set."""
+    mock_history = MagicMock(spec=HistorySearchTool)
+    mock_history.call = AsyncMock(return_value=ToolResult(
+        tool_use_id="",
+        payload={"hits": [{"score": 0.9, "question_preview": "prev"}]},
+    ))
+
+    tool = _make_tool(both_indexes, history_search=mock_history)
+    rec = Recorder(run_id="r_nohist", run_dir=tmp_run_dir)
+    result = await tool.call(
+        AllSourcesArgs(query="合同履行", k=3, include_history=False),
+        rec,
+    )
+    rec.close()
+
+    assert result.error is None
+    assert "history_hits" not in (result.payload or {})
+    # history_search.call must NOT have been invoked
+    mock_history.call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_all_sources_with_history(both_indexes, tmp_run_dir):
+    """include_history=True + history_search set → history_hits appears with mocked hits."""
+    fake_hits = [
+        {"score": 0.88, "session_id": "sess_1", "turn_no": 3, "question_preview": "租金问题"},
+        {"score": 0.75, "session_id": "sess_1", "turn_no": 1, "question_preview": "违约金"},
+    ]
+    mock_history = MagicMock(spec=HistorySearchTool)
+    mock_history.call = AsyncMock(return_value=ToolResult(
+        tool_use_id="",
+        payload={"hits": fake_hits},
+    ))
+
+    tool = _make_tool(both_indexes, history_search=mock_history)
+    rec = Recorder(run_id="r_hist", run_dir=tmp_run_dir)
+    result = await tool.call(
+        AllSourcesArgs(query="合同租金违约", k=3, include_history=True),
+        rec,
+    )
+    rec.close()
+
+    assert result.error is None
+    payload = result.payload or {}
+    # Core keys still present
+    assert "evidences" in payload
+    assert "count" in payload
+    assert "stats" in payload
+    # New key present with the expected hits
+    assert "history_hits" in payload
+    assert payload["history_hits"] == fake_hits
+    assert len(payload["history_hits"]) == 2
+    mock_history.call.assert_called_once()
