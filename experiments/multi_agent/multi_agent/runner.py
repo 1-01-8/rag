@@ -19,6 +19,8 @@ async def run_query(
     session_id: str | None = None,
     memory_store=None,
     turn_indexer=None,
+    compaction_provider: LLMProvider | None = None,
+    compaction_model: str | None = None,
 ) -> dict:
     """Top-level entry. Guarantees a RunFinished event regardless of outcome.
 
@@ -28,6 +30,11 @@ async def run_query(
         session_id: if provided alongside memory_store, appends a Turn and
                     updates StickyContext.linked_runs after a successful run.
         memory_store: a MarkdownMemoryStore instance (or compatible duck-type).
+        compaction_provider: if set (together with compaction_model), triggers
+                    maybe_compact() after write_sticky() per spec §5.4.1.
+                    Intentionally separate from `provider` so a cheaper model
+                    can be used for compaction.
+        compaction_model: model name passed to maybe_compact().
     """
     started_at = datetime.now()
     run_id = fresh_run_id()
@@ -86,5 +93,16 @@ async def run_query(
         if turn_indexer is not None:
             await turn_indexer.index_turn(session_id=session_id, turn=turn)
         memory_store.write_sticky(sticky)
+
+        # Spec §5.4.1: auto-compact when session exceeds threshold.
+        # Only runs when caller opts in with both compaction_provider + compaction_model.
+        if compaction_provider is not None and compaction_model is not None:
+            from multi_agent.memory.compaction import maybe_compact
+            await maybe_compact(
+                session_id,
+                memory_store,
+                provider=compaction_provider,
+                model=compaction_model,
+            )
 
     return result

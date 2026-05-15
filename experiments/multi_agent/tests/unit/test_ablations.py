@@ -37,3 +37,24 @@ def test_ablation_name_for_reporting():
     assert SwapModel(agent="lawyer", provider="anthropic", model="claude-opus-4-7").name == "swap_model:lawyer→claude-opus-4-7"
     assert DisableAgent(agent="supervisor").name == "disable_agent:supervisor"
     assert DisableMemory().name == "disable_memory"
+
+
+def test_disabled_tools_is_json_serializable():
+    """Fix 3: disabled_tools/disabled_agents must be plain lists, not sets."""
+    import json
+    cfg = {}
+    apply_ablation(cfg, DisableTool(tool="case_search"))
+    apply_ablation(cfg, DisableAgent(agent="supervisor"))
+    # Must not raise TypeError
+    serialized = json.dumps(cfg)
+    loaded = json.loads(serialized)
+    assert "case_search" in loaded["disabled_tools"]
+    assert "supervisor" in loaded["disabled_agents"]
+
+
+def test_duplicate_disabled_tools_deduped():
+    """Applying the same DisableTool twice must not duplicate the entry."""
+    cfg = {}
+    apply_ablation(cfg, DisableTool(tool="case_search"))
+    apply_ablation(cfg, DisableTool(tool="case_search"))
+    assert cfg["disabled_tools"].count("case_search") == 1

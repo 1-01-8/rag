@@ -25,9 +25,11 @@ def render_summary_md(group_dir: Path) -> Path:
         1 for r in ok if not r.get("citation_judge", {}).get("skipped", True)
     )
     p50 = int(statistics.median(latencies)) if latencies else 0
+    # p95 via quantiles() requires >=20 samples to avoid heavy extrapolation;
+    # fall back to max() for smaller sets (still a conservative upper bound).
     p95 = (
         int(statistics.quantiles(latencies, n=20)[18])
-        if len(latencies) >= 5
+        if len(latencies) >= 20
         else (max(latencies) if latencies else 0)
     )
 

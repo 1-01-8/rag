@@ -43,16 +43,24 @@ class DisableMemory(Ablation):
 
 
 def apply_ablation(config: dict[str, Any], ablation: Ablation) -> None:
-    """Mutate `config` in place to express `ablation`."""
+    """Mutate `config` in place to express `ablation`.
+
+    disabled_tools / disabled_agents are stored as plain lists (not sets) so
+    that json.dumps(config) works without going through a Pydantic model.
+    """
     if isinstance(ablation, DisableAgent):
-        config.setdefault("disabled_agents", set()).add(ablation.agent)
+        lst: list = config.setdefault("disabled_agents", [])
+        if ablation.agent not in lst:
+            lst.append(ablation.agent)
     elif isinstance(ablation, SwapModel):
         config.setdefault("model_overrides", {})[ablation.agent] = {
             "provider": ablation.provider,
             "model": ablation.model,
         }
     elif isinstance(ablation, DisableTool):
-        config.setdefault("disabled_tools", set()).add(ablation.tool)
+        lst = config.setdefault("disabled_tools", [])
+        if ablation.tool not in lst:
+            lst.append(ablation.tool)
     elif isinstance(ablation, DisableMemory):
         config["disable_memory"] = True
     else:

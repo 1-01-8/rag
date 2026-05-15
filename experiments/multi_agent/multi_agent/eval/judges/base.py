@@ -8,7 +8,9 @@ Signature note: LLMProvider.complete() takes:
 Returns LLMResponse with .text: str.
 """
 from __future__ import annotations
+import shutil
 import tempfile
+import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -71,14 +73,22 @@ class LLMJudge(ABC, Generic[T]):
             AgentMessage(role="user", content=user_text),
         ]
 
-        # Create a throwaway recorder for this judge call.
-        if self._judge_run_dir is not None:
-            run_dir = Path(self._judge_run_dir)
-        else:
-            # Fall back to a temp directory so judges work without explicit dir.
+        # Fix 1+2: avoid temp-dir leaks and concurrent Recorder races.
+        # - If no judge_run_dir was supplied, create a temp dir and clean it up
+        #   in finally (only self-created dirs are removed).
+        # - If judge_run_dir was supplied (production path), create a per-call
+        #   subdir to prevent concurrent calls from sharing the same events.jsonl.
+        call_token = uuid.uuid4().hex[:8]
+        created_here = False
+        if self._judge_run_dir is None:
             run_dir = Path(tempfile.mkdtemp(prefix="judge_run_"))
+            created_here = True
+        else:
+            run_dir = Path(self._judge_run_dir) / f"{self.name}_{call_token}"
+            run_dir.mkdir(parents=True, exist_ok=True)
 
-        recorder = Recorder(run_id=f"judge-{self.name}", run_dir=run_dir)
+        run_id = f"judge-{self.name}-{call_token}"
+        recorder = Recorder(run_id=run_id, run_dir=run_dir)
         try:
             resp = await self.provider.complete(
                 messages,
@@ -103,3 +113,5 @@ class LLMJudge(ABC, Generic[T]):
             )
         finally:
             recorder.close()
+            if created_here:
+                shutil.rmtree(run_dir, ignore_errors=True)
