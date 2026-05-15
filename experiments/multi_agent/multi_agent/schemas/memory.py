@@ -55,6 +55,43 @@ class StickyContext(BaseModel):
     body: str = ""
 
 
+# --- Intent-based read_sticky views (spec §5.4.3) ---
+#
+# Each view exposes only the slice an agent needs, so prompt token usage stays
+# low. All views always include session_id so the caller can correlate.
+
+StickyIntent = Literal["full", "entities_only", "recent_citations", "summary_only"]
+
+
+class StickyEntitiesView(BaseModel):
+    """Slice returned by read_sticky(intent='entities_only').
+
+    Used by Receptionist to decide follow-up resolution without paying the
+    full StickyContext token cost.
+    """
+    session_id: str
+    entity_state: EntityState = Field(default_factory=EntityState)
+
+
+class StickyCitationsView(BaseModel):
+    """Slice returned by read_sticky(intent='recent_citations').
+
+    Used by Secretary to decide whether to query user_history for related
+    prior turns.
+    """
+    session_id: str
+    cited_articles: list[CitedArticle] = Field(default_factory=list)
+
+
+class StickySummaryView(BaseModel):
+    """Slice returned by read_sticky(intent='summary_only').
+
+    The compressed prose summary of older turns (post-compaction, spec §5.4.1).
+    """
+    session_id: str
+    history_summary: str = ""
+
+
 class Turn(BaseModel):
     """One conversation turn — turns/NNN-slug.md (spec §5.5)."""
     turn: int

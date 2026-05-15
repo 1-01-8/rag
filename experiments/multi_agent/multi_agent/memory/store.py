@@ -14,7 +14,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 import yaml
-from multi_agent.schemas.memory import StickyContext, Turn, AgentNote
+from multi_agent.schemas.memory import (
+    StickyContext, Turn, AgentNote,
+    EntityState, CitedArticle,
+    StickyIntent, StickyEntitiesView, StickyCitationsView, StickySummaryView,
+)
+
+
+_INTENT_VALUES: frozenset[str] = frozenset(
+    {"full", "entities_only", "recent_citations", "summary_only"}
+)
 
 
 def _slugify(text: str, max_len: int = 30) -> str:
@@ -76,14 +85,106 @@ class MarkdownMemoryStore:
     def _sticky_path(self, session_id: str) -> Path:
         return self.root / "sessions" / session_id / "sticky.md"
 
-    def read_sticky(self, session_id: str) -> StickyContext | None:
+    def _read_sticky_frontmatter(
+        self, session_id: str
+    ) -> tuple[dict, str] | None:
+        """Robust sticky.md read.
+
+        Returns (frontmatter_dict, body) on success, None when:
+          - file does not exist
+          - file cannot be read (permissions, decoding error)
+          - YAML is malformed
+
+        Never raises. Used by all read_sticky intent branches so file-level
+        robustness lives in one place.
+        """
         path = self._sticky_path(session_id)
         if not path.exists():
             return None
-        text = path.read_text(encoding="utf-8")
-        fm, body = _parse_frontmatter(text)
-        fm["body"] = body
-        return StickyContext.model_validate(fm)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        try:
+            fm, body = _parse_frontmatter(text)
+        except yaml.YAMLError:
+            return None
+        if not isinstance(fm, dict):
+            # YAML may parse to a scalar/list/None if the frontmatter is
+            # syntactically valid but semantically wrong. Treat as corrupt.
+            return None
+        return fm, body
+
+    def read_sticky(
+        self,
+        session_id: str,
+        intent: StickyIntent = "full",
+    ) -> StickyContext | StickyEntitiesView | StickyCitationsView | StickySummaryView | None:
+        """Read sticky.md, optionally returning only a slice (spec §5.4.3).
+
+        intent semantics:
+          - "full"             → StickyContext (default, backward-compatible)
+          - "entities_only"    → StickyEntitiesView (EntityState + session_id)
+          - "recent_citations" → StickyCitationsView (cited_articles list)
+          - "summary_only"     → StickySummaryView (compressed history summary)
+
+        Robustness:
+          - file missing → None for every intent
+          - corrupt YAML / unreadable file → None for every intent
+          - missing field in an otherwise-valid sticky → empty view (NOT None);
+            this lets callers distinguish "session has no entities yet" from
+            "session does not exist"
+          - corrupt individual list items (e.g. one malformed cited_article)
+            are silently skipped; valid neighbours still returned
+          - unknown intent string → ValueError (programming bug, not a data bug)
+        """
+        if intent not in _INTENT_VALUES:
+            raise ValueError(
+                f"Unknown intent {intent!r}; expected one of "
+                f"{sorted(_INTENT_VALUES)}"
+            )
+
+        parsed = self._read_sticky_frontmatter(session_id)
+        if parsed is None:
+            return None
+        fm, body = parsed
+        sid = fm.get("session_id") or session_id
+
+        if intent == "full":
+            try:
+                fm_with_body = {**fm, "body": body}
+                return StickyContext.model_validate(fm_with_body)
+            except Exception:
+                # Validation failure on a present-but-malformed sticky.
+                # Treat as corrupt: callers using read_sticky() get None
+                # rather than a half-built object.
+                return None
+
+        if intent == "entities_only":
+            raw = fm.get("entity_state")
+            try:
+                es = EntityState.model_validate(raw or {})
+            except Exception:
+                es = EntityState()
+            return StickyEntitiesView(session_id=sid, entity_state=es)
+
+        if intent == "recent_citations":
+            raw_list = fm.get("cited_articles") or []
+            cits: list[CitedArticle] = []
+            if isinstance(raw_list, list):
+                for item in raw_list:
+                    try:
+                        cits.append(CitedArticle.model_validate(item))
+                    except Exception:
+                        # Skip individual corrupt entry, keep the rest
+                        continue
+            return StickyCitationsView(session_id=sid, cited_articles=cits)
+
+        # intent == "summary_only"
+        summary = fm.get("history_summary") or ""
+        if not isinstance(summary, str):
+            summary = ""
+        return StickySummaryView(session_id=sid, history_summary=summary)
 
     def write_sticky(self, sticky: StickyContext) -> Path:
         sticky.updated_at = datetime.now()
