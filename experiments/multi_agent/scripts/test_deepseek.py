@@ -86,7 +86,7 @@ async def main() -> int:
         )
         if resp.tool_calls:
             tc = resp.tool_calls[0]
-            print(f"  ✓ 工具调用: {tc.name}({tc.args})")
+            print(f"  ✓ 工具调用: {tc.tool_name}({tc.args})")
             print(f"  ✓ finish_reason: {resp.finish_reason}")
         else:
             print(f"  ⚠️  没触发工具调用, 直接回答: {resp.text[:80]}...")
