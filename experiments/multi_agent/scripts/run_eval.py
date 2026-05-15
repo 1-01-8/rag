@@ -67,6 +67,7 @@ async def main_async(args) -> int:
             "run_id": result["run_id"],
             "status": result.get("status", "ok"),
             "lawyer_output": lo,
+            "evidence_pool": result.get("evidence_pool") or [],
             "run_dir": runs_root / result["run_id"],
         }
 

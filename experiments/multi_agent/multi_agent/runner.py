@@ -70,7 +70,21 @@ async def run_query(
         finally:
             recorder.close()
 
-    result = {"run_id": run_id, "status": status, "final_answer": final_answer}
+    # Expose evidence_pool from the agent's WorkingMemory (if any) so callers
+    # like ExperimentRunner can pass it to LLM judges. Empty list when the
+    # agent has no WorkingMemory (e.g. Receptionist).
+    evidence_pool: list[dict] = []
+    if agent is not None:
+        wm = getattr(agent, "working_memory", None)
+        if wm is not None:
+            evidence_pool = [ev.model_dump() for ev in getattr(wm, "retrieved_evidence", [])]
+
+    result = {
+        "run_id": run_id,
+        "status": status,
+        "final_answer": final_answer,
+        "evidence_pool": evidence_pool,
+    }
 
     # Memory integration: persist Turn and update StickyContext after success.
     if session_id and memory_store is not None and status == "ok":
