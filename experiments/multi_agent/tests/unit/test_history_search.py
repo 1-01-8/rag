@@ -67,3 +67,50 @@ async def test_history_search_all_sessions_no_filter(tmp_path):
     call = mock_client.query_points.call_args
     qf = call.kwargs.get("query_filter")
     assert qf is None    # no filter when scope=all_sessions
+
+
+@pytest.mark.asyncio
+async def test_history_search_uses_default_session_id_when_omitted(tmp_path):
+    """If args.session_id is None, the tool's default_session_id is used."""
+    mock_encoder = MagicMock()
+    mock_encoder.encode_batch.return_value = np.zeros((1, 1024), dtype=np.float32)
+    mock_client = MagicMock()
+    mock_client.query_points.return_value = MagicMock(points=[])
+
+    with patch("multi_agent.tools.retrievers.history_search.get_qdrant_client",
+               return_value=mock_client):
+        tool = HistorySearchTool(
+            collection_name="test_hist",
+            dense_encoder=mock_encoder,
+            default_session_id="s_default",
+        )
+        rec = Recorder(run_id="r", run_dir=tmp_path / "r")
+        await tool.call(HistorySearchArgs(query="q"), rec)
+        rec.close()
+
+    call = mock_client.query_points.call_args
+    qf = call.kwargs.get("query_filter")
+    assert qf is not None
+    # Inspect the filter's match value
+    cond = qf.must[0]
+    assert cond.match.value == "s_default"
+
+
+@pytest.mark.asyncio
+async def test_history_search_session_scope_without_session_id_returns_empty(tmp_path):
+    """No session_id (arg or default) + scope=session → empty hits + error payload."""
+    mock_encoder = MagicMock()
+    mock_encoder.encode_batch.return_value = np.zeros((1, 1024), dtype=np.float32)
+    mock_client = MagicMock()
+
+    with patch("multi_agent.tools.retrievers.history_search.get_qdrant_client",
+               return_value=mock_client):
+        tool = HistorySearchTool(collection_name="test_hist", dense_encoder=mock_encoder)
+        rec = Recorder(run_id="r", run_dir=tmp_path / "r")
+        result = await tool.call(HistorySearchArgs(query="q"), rec)
+        rec.close()
+
+    assert result.payload["hits"] == []
+    assert "session_id" in result.payload.get("error", "")
+    # Qdrant should NOT have been called
+    mock_client.query_points.assert_not_called()

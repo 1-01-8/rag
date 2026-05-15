@@ -18,7 +18,9 @@ from multi_agent.tools.retrievers.dense_encoder import DenseEncoder  # noqa: F40
 
 class HistorySearchArgs(BaseModel):
     query: str
-    session_id: str
+    # Optional: if omitted, the tool's default_session_id is used. Allows the
+    # Lawyer to call this tool without knowing/passing the session_id every time.
+    session_id: str | None = None
     k: int = 5
     scope: Literal["session", "all_sessions"] = "session"
 
@@ -28,18 +30,22 @@ class HistorySearchTool(Tool):
 
     Pydantic field `dense_encoder` holds the bge-m3 encoder; arbitrary_types_allowed
     is already set on the Tool base class model_config.
+
+    `default_session_id` may be set at construction so the agent can call this
+    tool without passing session_id in every invocation.
     """
 
     name: str = "history_search"
     description: str = (
         "Search semantically-similar past Q&A turns in the user's history. "
-        "Default scope='session' restricts to the current session_id; "
+        "Default scope='session' restricts to the current session; "
         "scope='all_sessions' searches across all sessions."
     )
     args_schema: type[BaseModel] = HistorySearchArgs
     collection_name: str
     # Any so MagicMock works in unit tests; accepts real DenseEncoder at runtime
     dense_encoder: Any
+    default_session_id: str | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -49,14 +55,22 @@ class HistorySearchTool(Tool):
 
         client = get_qdrant_client()
 
+        # Resolve session_id: explicit arg wins, fall back to construction default
+        effective_session_id = args.session_id or self.default_session_id
+
         # Build filter: session-scoped by default, omit for all_sessions
         query_filter = None
         if args.scope == "session":
+            if not effective_session_id:
+                return ToolResult(
+                    tool_use_id="",
+                    payload={"hits": [], "error": "session-scoped search requires session_id"},
+                )
             query_filter = models.Filter(
                 must=[
                     models.FieldCondition(
                         key="session_id",
-                        match=models.MatchValue(value=args.session_id),
+                        match=models.MatchValue(value=effective_session_id),
                     )
                 ]
             )
