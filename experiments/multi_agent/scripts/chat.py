@@ -155,7 +155,25 @@ async def chat_loop(args) -> int:
         default_session_id=session_id,
     )
 
-    provider = OpenAICompatibleProvider()
+    # Provider 选择 — local Qwen / DeepSeek
+    if args.provider == "deepseek":
+        import os
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            print("❌ --provider deepseek 但环境变量 DEEPSEEK_API_KEY 未设置")
+            print("   export DEEPSEEK_API_KEY=sk-xxx  然后重跑")
+            return 1
+        provider = OpenAICompatibleProvider(
+            base_url="https://api.deepseek.com/v1",
+            api_key=api_key,
+        )
+        model_name = args.model or "deepseek-chat"
+        print(f"Provider: DeepSeek API  model={model_name}")
+    else:
+        provider = OpenAICompatibleProvider()  # 默认本地 vLLM
+        model_name = args.model or "qwen3.5-9b"
+        print(f"Provider: 本地 vLLM  model={model_name}")
+
     statute_search = StatuteSearchTool(collection_name=coll, sparse_artifact_path=sparse)
 
     # 预热 statute_search 的 lazy encoder, 避免首次问问题时再触发 Loading weights
@@ -217,7 +235,7 @@ async def chat_loop(args) -> int:
                         agent_factory=lambda p, r: LawyerAgent(
                             name="lawyer", role="advisor", provider=p, recorder=r,
                             tools=tools_for_lawyer,
-                            model="qwen3.5-9b", specialty=args.specialty,
+                            model=model_name, specialty=args.specialty,
                             max_steps=6, max_tool_calls=8, max_pre_tool_rejections=2,
                         ),
                         provider=provider, runs_root=runs_root,
@@ -231,12 +249,12 @@ async def chat_loop(args) -> int:
                         lawyer_factory=lambda p, r: LawyerAgent(
                             name="lawyer", role="advisor", provider=p, recorder=r,
                             tools=tools_for_lawyer,
-                            model="qwen3.5-9b", specialty=args.specialty,
+                            model=model_name, specialty=args.specialty,
                             max_steps=6, max_tool_calls=8, max_pre_tool_rejections=2,
                         ),
                         supervisor_factory=lambda p, r: SupervisorAgent(
                             name="supervisor", role="qa", provider=p, recorder=r,
-                            model="qwen3.5-9b", max_steps=3, max_pre_tool_rejections=5,
+                            model=model_name, max_steps=3, max_pre_tool_rejections=5,
                         ),
                         lawyer_provider=provider, supervisor_provider=provider,
                         runs_root=runs_root,
@@ -290,6 +308,10 @@ def main() -> int:
                    help="trace 目录 (默认 ./runs)")
     p.add_argument("--specialty", default="民事",
                    help="律师专业方向 民事/交通/婚姻/房产/劳动/通用 (默认 民事)")
+    p.add_argument("--provider", choices=["local", "deepseek"], default="local",
+                   help="LLM provider: local (vLLM Qwen, 默认) 或 deepseek (api.deepseek.com)")
+    p.add_argument("--model", default=None,
+                   help="模型名 (默认: local=qwen3.5-9b / deepseek=deepseek-chat)")
     p.add_argument("--no-supervisor", action="store_true",
                    help="跳过审核员加速 (但失去引用真实性校验)")
     args = p.parse_args()

@@ -3,9 +3,14 @@ from __future__ import annotations
 
 
 MODEL_PRICING_PER_M_TOKENS: dict[str, dict[str, float]] = {
+    # Anthropic
     "claude-opus-4-7":           {"input": 15.00, "output": 75.00, "cache_read": 1.50},
     "claude-sonnet-4-6":         {"input":  3.00, "output": 15.00, "cache_read": 0.30},
     "claude-haiku-4-5-20251001": {"input":  0.80, "output":  4.00, "cache_read": 0.08},
+    # DeepSeek (api.deepseek.com 公布价, 标准时段)
+    "deepseek-chat":             {"input":  0.27, "output":  1.10, "cache_read": 0.07},
+    "deepseek-reasoner":         {"input":  0.55, "output":  2.19, "cache_read": 0.14},
+    # Local self-hosted — 零边际
     "qwen3.5-9b":                {"input":  0.00, "output":  0.00, "cache_read": 0.00},
 }
 

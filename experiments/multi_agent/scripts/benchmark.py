@@ -57,6 +57,13 @@ _CHUNKS = [
 
 
 async def main() -> int:
+    import argparse, os
+    p = argparse.ArgumentParser(description="Benchmark synthetic_seed_v1 × Lawyer+Supervisor")
+    p.add_argument("--provider", choices=["local", "deepseek"], default="local")
+    p.add_argument("--model", default=None,
+                   help="默认: local=qwen3.5-9b / deepseek=deepseek-chat")
+    args = p.parse_args()
+
     runs_root = Path("runs") / f"bench_{uuid.uuid4().hex[:6]}"
     runs_root.mkdir(parents=True, exist_ok=True)
 
@@ -78,7 +85,20 @@ async def main() -> int:
     qs.queries = [q for q in qs.queries if "smalltalk" not in q.tags]
     print(f"Running {len(qs.queries)} queries through Lawyer + Supervisor...\n")
 
-    provider = OpenAICompatibleProvider()
+    if args.provider == "deepseek":
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            print("❌ --provider deepseek 但 DEEPSEEK_API_KEY 未设置")
+            return 1
+        provider = OpenAICompatibleProvider(
+            base_url="https://api.deepseek.com/v1", api_key=api_key,
+        )
+        model_name = args.model or "deepseek-chat"
+        print(f"Provider: DeepSeek  model={model_name}")
+    else:
+        provider = OpenAICompatibleProvider()
+        model_name = args.model or "qwen3.5-9b"
+        print(f"Provider: local vLLM  model={model_name}")
     statute_search = StatuteSearchTool(
         collection_name=coll, sparse_artifact_path=sparse_path,
     )
@@ -93,12 +113,12 @@ async def main() -> int:
                 lawyer_factory=lambda p, r: LawyerAgent(
                     name="lawyer", role="advisor", provider=p, recorder=r,
                     tools=[statute_search],
-                    model="qwen3.5-9b", specialty="民事",
+                    model=model_name, specialty="民事",
                     max_steps=6, max_tool_calls=8, max_pre_tool_rejections=2,
                 ),
                 supervisor_factory=lambda p, r: SupervisorAgent(
                     name="supervisor", role="qa", provider=p, recorder=r,
-                    model="qwen3.5-9b", max_steps=3, max_pre_tool_rejections=5,
+                    model=model_name, max_steps=3, max_pre_tool_rejections=5,
                 ),
                 lawyer_provider=provider, supervisor_provider=provider,
                 runs_root=runs_root,
