@@ -61,6 +61,19 @@ async def run_query(
         error = f"{type(e).__name__}: {e}"
         raise
     finally:
+        # Spec §5.4.2: persist WorkingMemory snapshot to artifacts/ alongside trace.
+        # Best-effort: ignore failures (agent may not exist, or WM may be empty).
+        if agent is not None:
+            wm = getattr(agent, "working_memory", None)
+            if wm is not None:
+                try:
+                    artifacts_dir = run_dir / "artifacts"
+                    artifacts_dir.mkdir(parents=True, exist_ok=True)
+                    (artifacts_dir / "working_memory.json").write_text(
+                        wm.model_dump_json(indent=2), encoding="utf-8",
+                    )
+                except Exception:
+                    pass
         try:
             recorder.emit(RunFinished(
                 event_id=recorder.fresh_event_id(), run_id=run_id,
