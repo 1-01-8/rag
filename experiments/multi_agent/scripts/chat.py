@@ -74,6 +74,30 @@ def _build_seed_index(name: str, sparse_path: Path) -> None:
                 sparse_artifact_path=sparse_path, dense_encoder=DenseEncoder())
 
 
+def _last_llm_raw_for_query(runs_root: Path, query: str) -> str:
+    """搜最近一个 run, 找到 raw 是非 JSON 文本的 LLMResponded 返回."""
+    try:
+        for run_dir in sorted(Path(runs_root).glob("r_*"), reverse=True)[:3]:
+            p = run_dir / "events.jsonl"
+            if not p.exists():
+                continue
+            latest_raw = ""
+            for line in p.read_text(encoding="utf-8").splitlines():
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if e.get("event_type") == "LLMResponded":
+                    raw = (e.get("raw_response") or "").strip()
+                    if raw and not raw.lstrip().startswith(("{", "[", "```json")):
+                        latest_raw = raw
+            if latest_raw:
+                return latest_raw
+    except Exception:
+        pass
+    return "(没找到模型原始回复)"
+
+
 def _print_answer(result: dict, *, with_supervisor: bool) -> None:
     """漂亮打印 lawyer 答复 + supervisor verdict."""
     final = result.get("lawyer_result", {}).get("final_answer") if with_supervisor \
@@ -292,7 +316,18 @@ async def chat_loop(args) -> int:
                     await turn_indexer.index_turn(session_id=session_id, turn=t)
                     store.write_sticky(sticky)
             except Exception as e:
-                print(f"\n❌ 错误: {type(e).__name__}: {e}")
+                # 特殊处理: Lawyer 输出非 JSON (反问澄清 / 拒答) → 提取并显示给用户
+                err_name = type(e).__name__
+                if "ResponseValidationError" in err_name or "JSON" in str(e):
+                    raw = _last_llm_raw_for_query(runs_root, question)
+                    print("\n" + "=" * 70)
+                    print("⚠️  律师未给出标准答复, 而是反问/拒答 (原文):")
+                    print("=" * 70)
+                    print(raw[:1500])
+                    print("=" * 70)
+                    print("提示: 请补充信息后再问 (例如: 你想举报 / 你是当事人 / 等)")
+                else:
+                    print(f"\n❌ 错误: {err_name}: {e}")
                 continue
             finally:
                 stop_heartbeat.set()
