@@ -10,6 +10,18 @@ from multi_agent.agents.base import AgentInput
 from multi_agent.tracing.recorder import Recorder
 from multi_agent.tracing.ulid_gen import fresh_run_id
 
+_NOTE_SYSTEM_PROMPT = """\
+你是失败模式归档员。给你一段律师答复 + Supervisor 拒绝理由,生成一个简短的 agent_note 用于以后避免类似错误。
+
+输出 JSON:
+{
+  "name": "lawyer-<slug>-<key-issue>",
+  "description": "<一句话总结失败模式>",
+  "body": "<200 字以内的 markdown 描述错误 + 建议改进>"
+}
+
+只输出 JSON。"""
+
 
 async def run_with_supervisor(
     *,
@@ -22,6 +34,8 @@ async def run_with_supervisor(
     lawyer_config: dict | None = None,
     session_id: str | None = None,
     memory_store=None,
+    note_provider: LLMProvider | None = None,
+    note_model: str | None = None,
 ) -> dict[str, Any]:
     """Run Lawyer via run_query, then run Supervisor on the lawyer output.
 
@@ -82,9 +96,61 @@ async def run_with_supervisor(
     }))
     sup_recorder.close()
 
+    verdict_dict = sup_output.payload.model_dump()
+
+    # §5.6 — on reject, summarize failure into an AgentNote via cheap local LLM.
+    if (
+        verdict_dict.get("verdict") == "reject"
+        and memory_store is not None
+        and note_provider is not None
+        and note_model is not None
+    ):
+        try:
+            from multi_agent.schemas.messages import AgentMessage
+            from multi_agent.providers.json_robust import parse_json_robust
+            from multi_agent.schemas.memory import AgentNote
+
+            user_ctx = _json.dumps({
+                "lawyer_output": lawyer_out_dict,
+                "supervisor_issues": verdict_dict.get("issues", []),
+                "supervisor_verdict": verdict_dict,
+            }, ensure_ascii=False)
+
+            note_run_id = fresh_run_id()
+            note_recorder = Recorder(
+                run_id=note_run_id,
+                run_dir=Path(runs_root) / note_run_id,
+            )
+            try:
+                note_resp = await note_provider.complete(
+                    [
+                        AgentMessage(role="system", content=_NOTE_SYSTEM_PROMPT),
+                        AgentMessage(role="user", content=user_ctx),
+                    ],
+                    model=note_model,
+                    recorder=note_recorder,
+                    agent_name="note-generator",
+                )
+            finally:
+                note_recorder.close()
+
+            parsed = parse_json_robust(note_resp.text)
+            note = AgentNote(
+                name=parsed.get("name", f"lawyer-reject-{note_run_id[:8]}"),
+                description=parsed.get("description", ""),
+                body=parsed.get("body", ""),
+                produced_by="note-generator",
+                about_agent="lawyer",
+                verdict_that_triggered="reject",
+                triggered_by_run=lawyer_result["run_id"],
+            )
+            memory_store.write_note(note)
+        except Exception:
+            pass  # note-generation failure must not break the main return
+
     return {
         "lawyer_run_id": lawyer_result["run_id"],
         "supervisor_run_id": sup_run_id,
         "lawyer_result": lawyer_result,
-        "supervisor_verdict": sup_output.payload.model_dump(),
+        "supervisor_verdict": verdict_dict,
     }
