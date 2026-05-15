@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Multi-Agent Legal RAG — 完整 Pipeline 报告</title>
+<style>
+:root {
+  --bg: #0f1419;
+  --panel: #1a1f29;
+  --text: #e4e4e7;
+  --muted: #a1a1aa;
+  --accent: #60a5fa;
+  --accent-2: #34d399;
+  --code-bg: #131820;
+  --border: #2a2f3a;
+  --table-stripe: #1d222d;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --panel: #fafafa;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #2563eb;
+    --accent-2: #059669;
+    --code-bg: #f4f4f5;
+    --border: #e4e4e7;
+    --table-stripe: #f9f9fb;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  line-height: 1.7;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+}
+
+h1, h2, h3, h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 2.5em;
+  margin-bottom: 0.8em;
+}
+
+h1 {
+  font-size: 2.2em;
+  border-bottom: 3px solid var(--accent);
+  padding-bottom: 0.4em;
+  margin-top: 1em;
+}
+
+h2 {
+  font-size: 1.7em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+  color: var(--accent);
+}
+
+h3 {
+  font-size: 1.3em;
+  color: var(--accent-2);
+}
+
+h4 { font-size: 1.1em; }
+
+p, ul, ol { margin: 0.8em 0; }
+
+ul, ol { padding-left: 1.6em; }
+
+li { margin: 0.3em 0; }
+
+code {
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+pre {
+  background: var(--code-bg);
+  padding: 1em 1.2em;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+pre code {
+  background: transparent;
+  padding: 0;
+  border: none;
+  font-size: 0.88em;
+  line-height: 1.55;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.2em 0;
+  font-size: 0.93em;
+}
+
+th, td {
+  border: 1px solid var(--border);
+  padding: 0.55em 0.9em;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--panel);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+tr:nth-child(2n) td { background: var(--table-stripe); }
+
+blockquote {
+  border-left: 4px solid var(--accent);
+  margin: 1em 0;
+  padding: 0.5em 1.2em;
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 0 6px 6px 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--accent);
+}
+
+a:hover { border-bottom-style: solid; }
+
+hr {
+  border: 0;
+  height: 1px;
+  background: var(--border);
+  margin: 3em 0;
+}
+
+/* TOC at top */
+.toc {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1em 1.5em;
+  margin: 2em 0;
+  font-size: 0.95em;
+}
+
+.toc h3 { margin-top: 0; color: var(--accent); }
+.toc ul { list-style: none; padding-left: 0; }
+.toc > ul > li > a { font-weight: 600; }
+.toc ul ul { padding-left: 1.5em; font-size: 0.95em; }
+
+/* Strong-emphasized inline */
+strong { color: var(--text); }
+
+/* Highlight callouts (the 🚀 emoji headings) */
+h2:has(em) { color: var(--accent-2); }
+
+/* Print friendly */
+@media print {
+  body {
+    max-width: none;
+    color: black;
+    background: white;
+    padding: 1cm;
+  }
+  pre, table, blockquote {
+    page-break-inside: avoid;
+  }
+  h1, h2, h3 { page-break-after: avoid; }
+}
+
+/* Header banner */
+.header-banner {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  color: white;
+  padding: 2em 2em;
+  margin: -2rem -2rem 2em -2rem;
+  border-radius: 0 0 12px 12px;
+}
+
+.header-banner h1 {
+  margin: 0;
+  border: none;
+  color: white;
+  font-size: 2em;
+}
+
+.header-banner .subtitle {
+  margin-top: 0.5em;
+  opacity: 0.92;
+  font-size: 1em;
+}
+
+/* "TL;DR" callout-like sections */
+h2 + p:first-of-type { font-size: 1.02em; }
+</style>
+</head>
+<body>
+<div class="header-banner">
+  <h1>Multi-Agent Legal RAG — 完整 Pipeline 报告</h1>
+  <div class="subtitle">完整 Pipeline 报告 · RAG + Multi-Agent 双部分 · 实测可复现</div>
+</div>
+
+<div class="toc"><div class="toc"><span class="toctitle">目录</span><ul>
+<li><a href="#11-rag">1.1 整体 RAG 流程</a></li>
+<li><a href="#12">1.2 数据源</a><ul>
+<li><a href="#corpus-spec-03">Corpus 边界 (spec §0.3 接受)</a></li>
+</ul>
+</li>
+<li><a href="#13-1-indexing-pipeline">1.3 阶段 1: Indexing Pipeline</a><ul>
+<li><a href="#131-corpus-loader-multi_agenttoolscorpuspy">1.3.1 corpus loader (multi_agent/tools/corpus.py)</a></li>
+<li><a href="#132-denseencoder-multi_agenttoolsretrieversdense_encoderpy">1.3.2 DenseEncoder (multi_agent/tools/retrievers/dense_encoder.py)</a></li>
+<li><a href="#133-sparseencoder-multi_agenttoolsretrieverssparse_encoderpy">1.3.3 SparseEncoder (multi_agent/tools/retrievers/sparse_encoder.py)</a></li>
+<li><a href="#134-indexbuilder-multi_agenttoolsretrieversindex_builderpy">1.3.4 IndexBuilder (multi_agent/tools/retrievers/index_builder.py)</a></li>
+<li><a href="#135-qdrant-collections">1.3.5 Qdrant Collections</a></li>
+</ul>
+</li>
+<li><a href="#14-2-retrieval-pipeline">1.4 阶段 2: Retrieval Pipeline</a><ul>
+<li><a href="#141-statutesearchtool-multi_agenttoolsretrieversstatute_searchpy">1.4.1 StatuteSearchTool (multi_agent/tools/retrievers/statute_search.py)</a></li>
+<li><a href="#142-casesearchtool-multi_agenttoolsretrieverscase_searchpy">1.4.2 CaseSearchTool (multi_agent/tools/retrievers/case_search.py)</a></li>
+<li><a href="#143-historysearchtool-multi_agenttoolsretrievershistory_searchpy">1.4.3 HistorySearchTool (multi_agent/tools/retrievers/history_search.py)</a></li>
+<li><a href="#144-allsourcessearchtool-multi_agenttoolsretrieversall_sources_searchpy">1.4.4 AllSourcesSearchTool (multi_agent/tools/retrievers/all_sources_search.py)</a></li>
+<li><a href="#145-exactreadtool-multi_agenttoolsretrieversexact_readpy">1.4.5 ExactReadTool (multi_agent/tools/retrievers/exact_read.py)</a></li>
+<li><a href="#146-turnindexer-multi_agenttoolsretrieversturn_indexerpy">1.4.6 TurnIndexer (multi_agent/tools/retrievers/turn_indexer.py)</a></li>
+</ul>
+</li>
+<li><a href="#15-memory">1.5 Memory 层</a><ul>
+<li><a href="#151-stickymd-phase-3">1.5.1 sticky.md (Phase 3)</a></li>
+<li><a href="#152-intent-based-phase-5v">1.5.2 Intent-based 读取 (Phase 5v)</a></li>
+<li><a href="#153-cross-turn-phase-3c">1.5.3 Cross-turn 压缩 (Phase 3c)</a></li>
+<li><a href="#154-agent-notes-phase-5u">1.5.4 Agent Notes (Phase 5u)</a></li>
+</ul>
+</li>
+<li><a href="#16-rag">1.6 RAG 检索质量 (实测)</a><ul>
+<li><a href="#161-ablation-phase-5g">1.6.1 真实 ablation 实验 (Phase 5g)</a></li>
+</ul>
+</li>
+<li><a href="#21-agent">2.1 整体 Agent 架构</a></li>
+<li><a href="#22-4-agent">2.2 4 个 Agent 详细对照</a><ul>
+<li><a href="#221-receptionist">2.2.1 Receptionist</a></li>
+<li><a href="#222-lawyer">2.2.2 Lawyer</a></li>
+<li><a href="#223-secretary">2.2.3 Secretary</a></li>
+<li><a href="#224-supervisor">2.2.4 Supervisor</a></li>
+</ul>
+</li>
+<li><a href="#23">2.3 编排入口</a></li>
+<li><a href="#24-provider">2.4 Provider 抽象</a><ul>
+<li><a href="#241-llm">2.4.1 实测可用的 LLM 选项</a></li>
+</ul>
+</li>
+<li><a href="#25-trace">2.5 Trace 系统</a></li>
+<li><a href="#26-multi_agenteval">2.6 评测框架 (multi_agent/eval/)</a><ul>
+<li><a href="#261-queryset-querysetpy">2.6.1 QuerySet (queryset.py)</a></li>
+<li><a href="#262-experimentrunner-runnerpy">2.6.2 ExperimentRunner (runner.py)</a></li>
+<li><a href="#263-metrics-metricspy">2.6.3 自动 metrics (metrics.py)</a></li>
+<li><a href="#264-judges">2.6.4 Judges</a></li>
+<li><a href="#265-comparator-comparatorpy-phase-5c-5h">2.6.5 Comparator (comparator.py, Phase 5c + 5h)</a></li>
+<li><a href="#266-ablationrunner-ablation_runnerpy-phase-5d">2.6.6 AblationRunner (ablation_runner.py, Phase 5d)</a></li>
+<li><a href="#267-latencyprofiler-latencypy-phase-5e">2.6.7 LatencyProfiler (latency.py, Phase 5e)</a></li>
+</ul>
+</li>
+<li><a href="#27-scripts">2.7 Scripts (用户接口)</a></li>
+<li><a href="#28">2.8 测试体系</a></li>
+<li><a href="#29-agent">2.9 已实测的 Agent 行为</a></li>
+<li><a href="#31">3.1 代码体量</a></li>
+<li><a href="#32-phase-tag-43">3.2 Phase tag (43 个)</a></li>
+<li><a href="#33-baseline-v31-siliconflow-ma_statutes">3.3 性能 baseline (V3.1 + SiliconFlow + ma_statutes)</a></li>
+<li><a href="#41">4.1 推荐使用路径 (已验证)</a></li>
+<li><a href="#42">4.2 备用启动</a></li>
+<li><a href="#43">4.3 离线索引重建</a></li>
+</ul>
+</div>
+</div>
+
+<blockquote>
+<p>项目位置: <code>/home/xxm/rag/experiments/multi_agent/</code>
+Spec: <code>/home/xxm/rag/docs/superpowers/specs/2026-05-14-multi-agent-experiment-design.md</code>
+实测状态: 340+ unit + integration 测试通过, 真实 Qwen + SiliconFlow E2E 验证</p>
+<p>本报告分两半:
+- <strong>第一部分: RAG</strong> — 数据 / 索引 / 检索 / 记忆 (所有跟"检索"相关的)
+- <strong>第二部分: Agent</strong> — 4 个 agent 角色 / 编排 / Trace / 评测 (所有跟"决策"相关的)</p>
+</blockquote>
+<hr />
+<h1 id="rag">第一部分: RAG (检索增强生成)</h1>
+<h2 id="11-rag">1.1 整体 RAG 流程</h2>
+<p>RAG 是两阶段:</p>
+<pre><code>阶段 1 (Indexing, 离线一次性)
+─────────────────────────────────────────────
+原始文档 → 切 chunk → 向量化 → 写 Qdrant
+Chinese-Laws  按法条     bge-m3   ma_statutes
+   177 部     ~13722条   +jieba   ma_cases
+                        (dense   ma_user_history
+                         +sparse)
+
+
+阶段 2 (Retrieval+Generation, 每次查询)
+─────────────────────────────────────────────
+用户问题 → 向量化 query → Qdrant 检索 top-k → LLM 综合 → 答复
+            (同样 bge-m3)  (混合 RRF 融合)
+</code></pre>
+<h2 id="12">1.2 数据源</h2>
+<table>
+<thead>
+<tr>
+<th>文件夹</th>
+<th>内容</th>
+<th>大小</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/home/xxm/rag/Chinese-Laws/extracted/</code></td>
+<td>177 部中国法律全文 <code>.txt</code></td>
+<td>7.4 MB</td>
+<td><code>ma_statutes</code> 索引源</td>
+</tr>
+<tr>
+<td><code>/home/xxm/rag/laws_data/</code></td>
+<td>23k 真实律师 Q&amp;A 对</td>
+<td>16 MB</td>
+<td><code>ma_cases</code> 索引源</td>
+</tr>
+<tr>
+<td><code>memory_store/sessions/&lt;sid&gt;/turns/</code></td>
+<td>当前用户每轮对话存档</td>
+<td>增长</td>
+<td><code>ma_user_history</code> 索引源</td>
+</tr>
+</tbody>
+</table>
+<h3 id="corpus-spec-03">Corpus 边界 (spec §0.3 接受)</h3>
+<p>未收录: <strong>劳动合同法 / 刑法 / 公司法 / 仲裁法</strong> — 询问这些领域时, Lawyer prompt 已有 fallback 路径 (citations=[], 在 dispute_analysis 中如实声明).</p>
+<h2 id="13-1-indexing-pipeline">1.3 阶段 1: Indexing Pipeline</h2>
+<h3 id="131-corpus-loader-multi_agenttoolscorpuspy">1.3.1 corpus loader (<code>multi_agent/tools/corpus.py</code>)</h3>
+<p>读取 <code>Chinese-Laws/extracted/*.txt</code>:</p>
+<pre><code class="language-python">load_corpus(corpus_dir) → list[Document]
+</code></pre>
+<ul>
+<li>一个 <code>.txt</code> → 一个 <code>Document</code> (代表一部法律)</li>
+<li>每条法条 → 一个 <code>Chunk</code>:
+  <code>python
+  Chunk(
+      doc_id="民法典-510",       # 唯一 ID
+      law_name="中华人民共和国民法典",
+      law_short="民法典",
+      article_no="510",
+      text="当事人就合同补充内容...",  # 原文
+  )</code></li>
+<li>总产出: 177 部 → ~13722 chunks</li>
+</ul>
+<h3 id="132-denseencoder-multi_agenttoolsretrieversdense_encoderpy">1.3.2 DenseEncoder (<code>multi_agent/tools/retrievers/dense_encoder.py</code>)</h3>
+<pre><code class="language-python">DenseEncoder()  # 默认 cuda:1, 可改 BGE_M3_DEVICE=cuda:0
+encoder.encode_batch(texts, batch_size=16) → (N, 1024)
+</code></pre>
+<ul>
+<li>模型: bge-m3 (本地 <code>/home/xxm/models/bge-m3/</code>)</li>
+<li>维度: 1024</li>
+<li>推荐 batch 8-16 (GPU illegal-memory-access 风险下调)</li>
+</ul>
+<h3 id="133-sparseencoder-multi_agenttoolsretrieverssparse_encoderpy">1.3.3 SparseEncoder (<code>multi_agent/tools/retrievers/sparse_encoder.py</code>)</h3>
+<pre><code class="language-python">sparse = SparseEncoder()
+sparse.fit(text_iter)            # 拟合 IDF
+vec = sparse.encode(text)        # → SparseVector(indices, values)
+sparse.save(path)                # 持久化为 json
+</code></pre>
+<ul>
+<li>分词: jieba</li>
+<li>权重: IDF</li>
+<li>持久化到 <code>data/indexes/statutes_sparse.json</code>, 跟 Qdrant collection <strong>必须配对</strong>, 缺一不可</li>
+</ul>
+<h3 id="134-indexbuilder-multi_agenttoolsretrieversindex_builderpy">1.3.4 IndexBuilder (<code>multi_agent/tools/retrievers/index_builder.py</code>)</h3>
+<p>主入口 <code>build_index()</code>:</p>
+<pre><code class="language-python">build_index(
+    documents=docs,
+    collection_name=&quot;ma_statutes&quot;,
+    sparse_artifact_path=Path(&quot;data/indexes/statutes_sparse.json&quot;),
+    dense_encoder=DenseEncoder(),
+    batch_size=8,
+) → IndexArtifacts
+</code></pre>
+<p>步骤:
+1. flatten chunks
+2. fit sparse 在 chunk.text 上
+3. <strong>批次</strong>循环: dense 编码 + sparse 编码 + Qdrant upsert
+4. 持久化 sparse json</p>
+<h3 id="135-qdrant-collections">1.3.5 Qdrant Collections</h3>
+<p>容器: <code>legal-rag-qdrant</code> (docker, host 6433→container 6333), 跟旧 <code>legal_rag/</code> 共享但 <strong><code>ma_</code> 前缀隔离</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Collection</th>
+<th>dense_dim</th>
+<th>sparse</th>
+<th>用途</th>
+<th>Spec</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ma_statutes</code></td>
+<td>1024</td>
+<td>✓</td>
+<td>法条 (13722 chunks)</td>
+<td>§4.2</td>
+</tr>
+<tr>
+<td><code>ma_cases</code></td>
+<td>1024</td>
+<td>✓</td>
+<td>律师 Q&amp;A</td>
+<td>§4.2</td>
+</tr>
+<tr>
+<td><code>ma_user_history</code></td>
+<td>1024</td>
+<td>✗</td>
+<td>历史 turn</td>
+<td>§4.2</td>
+</tr>
+<tr>
+<td><code>ma_user_history_chat</code></td>
+<td>1024</td>
+<td>✗</td>
+<td>chat.py 专用</td>
+<td>(派生)</td>
+</tr>
+</tbody>
+</table>
+<p>CLI 建索引脚本: <code>scripts/build_statutes_index.py</code> / <code>build_cases_index.py</code>.</p>
+<h2 id="14-2-retrieval-pipeline">1.4 阶段 2: Retrieval Pipeline</h2>
+<h3 id="141-statutesearchtool-multi_agenttoolsretrieversstatute_searchpy">1.4.1 StatuteSearchTool (<code>multi_agent/tools/retrievers/statute_search.py</code>)</h3>
+<pre><code class="language-python">class StatuteSearchTool(Tool):
+    name = &quot;statute_search&quot;
+    args_schema = StatuteSearchArgs  # {query, k, law_short?}
+
+    async def call(args, recorder) → ToolResult:
+        # 1. bge-m3 编码 query → dense_vec (1024)
+        # 2. jieba+IDF 编码 query → sparse_vec
+        # 3. client.query_points(
+        #      collection=ma_statutes,
+        #      prefetch=[Prefetch(query=sparse, using=&quot;sparse&quot;),
+        #               Prefetch(query=dense, using=&quot;dense&quot;)],
+        #      query=FusionQuery(fusion=Fusion.RRF),
+        #      limit=k,
+        #    )
+        # 4. 返回 List[Evidence]
+</code></pre>
+<p><strong>关键设计</strong>: Qdrant native <strong>Reciprocal Rank Fusion</strong>, 一次 round-trip 同时跑 dense+sparse 然后融合, 不是分别查后客户端合并.</p>
+<h3 id="142-casesearchtool-multi_agenttoolsretrieverscase_searchpy">1.4.2 CaseSearchTool (<code>multi_agent/tools/retrievers/case_search.py</code>)</h3>
+<p>同样结构, 但跨 <code>ma_cases</code>, 返回的是律师 Q&amp;A 配对 (含 case_id + cause/分类).</p>
+<h3 id="143-historysearchtool-multi_agenttoolsretrievershistory_searchpy">1.4.3 HistorySearchTool (<code>multi_agent/tools/retrievers/history_search.py</code>)</h3>
+<p>dense-only (turn text 不需要 sparse), 按 <code>session_id</code> filter:</p>
+<pre><code class="language-python">HistorySearchTool(
+    collection_name=&quot;ma_user_history&quot;,
+    dense_encoder=encoder,
+    default_session_id=&quot;chat_xxxxxx&quot;,   # 构造时绑定 session
+)
+# Lawyer 调用时只传 query, session 自动应用
+# scope=&quot;all_sessions&quot; 时跨 session 检索
+</code></pre>
+<h3 id="144-allsourcessearchtool-multi_agenttoolsretrieversall_sources_searchpy">1.4.4 AllSourcesSearchTool (<code>multi_agent/tools/retrievers/all_sources_search.py</code>)</h3>
+<p>跨 collection 融合检索:</p>
+<pre><code class="language-python">AllSourcesArgs(query, k=8, law_short?, cause?, include_history=False)
+→ statute_search + case_search 各自查 → RRF 二次融合 → top_k Evidence
+→ 若 include_history=True 且 history_search 注入, 额外返回 history_hits 字段
+</code></pre>
+<p>为啥不一次性融合三者? 因为 history hits 的 schema 跟 Evidence (法条) 完全不同, 不适合 RRF 同一池子.</p>
+<h3 id="145-exactreadtool-multi_agenttoolsretrieversexact_readpy">1.4.5 ExactReadTool (<code>multi_agent/tools/retrievers/exact_read.py</code>)</h3>
+<p>按 <code>doc_id</code> 精读单条法条全文 (Lawyer 检索结果是 excerpt 截断, 想看完整条文用这个):</p>
+<pre><code class="language-python">ExactReadArgs(doc_id=&quot;民法典-563&quot;) → Evidence (text 是完整条文)
+</code></pre>
+<h3 id="146-turnindexer-multi_agenttoolsretrieversturn_indexerpy">1.4.6 TurnIndexer (<code>multi_agent/tools/retrievers/turn_indexer.py</code>)</h3>
+<p>每完成一个 turn, 把 turn 内容 (question + final_answer) 索引到 <code>ma_user_history</code>:</p>
+<pre><code class="language-python">TurnIndexer(collection_name=&quot;ma_user_history&quot;, dense_encoder=encoder)
+await indexer.index_turn(session_id, turn)
+# 写入: dense_vec + payload {session_id, turn_no, run_id, question_preview, answer_preview, started_at}
+# Point ID 用 uuid5 (session+turn 确定性) → 同 turn 重写而非追加
+</code></pre>
+<p>被 <code>run_query(turn_indexer=indexer)</code> 自动触发.</p>
+<h2 id="15-memory">1.5 Memory 层</h2>
+<p><strong>多层架构</strong> (按时间尺度):</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>时间尺度</th>
+<th>存储</th>
+<th>谁写</th>
+<th>谁读</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>WorkingMemory</strong></td>
+<td>1 个 run (~分钟)</td>
+<td>Pydantic 对象, 内存</td>
+<td>BaseAgent 自动收集 Evidence</td>
+<td>跨 ReAct step 复用, 序列化到 <code>artifacts/working_memory.json</code></td>
+</tr>
+<tr>
+<td><strong>sticky.md</strong></td>
+<td>1 个 session (~天-周)</td>
+<td>MD + YAML frontmatter</td>
+<td>runner 每轮覆盖</td>
+<td>Receptionist/Lawyer 读</td>
+</tr>
+<tr>
+<td><strong>turns/NNN.md</strong></td>
+<td>永久</td>
+<td>MD, 不可变</td>
+<td>runner 每轮追加</td>
+<td>历史回溯</td>
+</tr>
+<tr>
+<td><strong>agent_notes/*.md</strong></td>
+<td>永久</td>
+<td>MD</td>
+<td>Supervisor reject 时触发 LLM 生成</td>
+<td>跨 session 学习</td>
+</tr>
+</tbody>
+</table>
+<h3 id="151-stickymd-phase-3">1.5.1 sticky.md (Phase 3)</h3>
+<pre><code class="language-yaml">---
+session_id: chat_abc123
+legal_domain: 民事
+case_type: 租赁纠纷
+last_law_name: 民法典
+mentioned_laws: [民法典]
+cited_articles:
+  - {law: 民法典, article: &quot;510&quot;, from_turn: 1}
+linked_runs: [r_a1b2c3]
+entity_state:
+  key_facts: [...]
+  open_questions: [...]
+  rejected_paths: [...]
+history_summary: &quot;第 1-3 轮: 用户咨询涨租问题...&quot;
+---
+</code></pre>
+<h3 id="152-intent-based-phase-5v">1.5.2 Intent-based 读取 (Phase 5v)</h3>
+<p>避免每次都吃完整 sticky 的 token 成本:</p>
+<pre><code class="language-python">store.read_sticky(sid)                          # → StickyContext (默认 full)
+store.read_sticky(sid, intent=&quot;entities_only&quot;)  # → StickyEntitiesView (省 60%)
+store.read_sticky(sid, intent=&quot;recent_citations&quot;) # → StickyCitationsView
+store.read_sticky(sid, intent=&quot;summary_only&quot;)   # → StickySummaryView
+</code></pre>
+<p>26 测试覆盖所有鲁棒边界 (文件缺失/YAML 损坏/字段空/单条目损坏/未知 intent).</p>
+<h3 id="153-cross-turn-phase-3c">1.5.3 Cross-turn 压缩 (Phase 3c)</h3>
+<p>当 session &gt; 5 turns:</p>
+<pre><code class="language-python">await maybe_compact(session_id, store, provider, model)
+# 1. 取最老的 (total - 3) 个 turn
+# 2. 调 LLM 压缩成 ≤200 字 prose
+# 3. 写入 sticky.history_summary
+# 4. 旧 turn 文件不删 (保留可追溯性)
+</code></pre>
+<p>通过 <code>run_query(compaction_provider=qwen, compaction_model="qwen3.5-9b")</code> 可选启用.</p>
+<h3 id="154-agent-notes-phase-5u">1.5.4 Agent Notes (Phase 5u)</h3>
+<p>当 Supervisor verdict=reject 时, 自动触发本地 Qwen 总结失败模式写 <code>agent_notes/&lt;slug&gt;.md</code>:</p>
+<pre><code class="language-yaml">---
+name: lawyer-rental-misses-mgmt-rules
+description: 涨租问题 Lawyer 漏引《商品房屋租赁管理办法》
+about_agent: lawyer
+verdict_that_triggered: reject
+triggered_by_run: r_xxx
+created_at: 2026-05-15T10:00:00
+---
+
+## 失败模式
+...
+
+## 改进建议
+...
+</code></pre>
+<p>跨 session 可被 Receptionist/Lawyer 读取作为先验 (当前 prompt 未集成, Phase 3e+ 可加).</p>
+<h2 id="16-rag">1.6 RAG 检索质量 (实测)</h2>
+<p><strong>benchmark.py 4 个查询</strong> (synthetic_seed_v1 实质部分):</p>
+<table>
+<thead>
+<tr>
+<th>Query</th>
+<th>引用命中</th>
+<th>检索耗时</th>
+<th>LLM 耗时</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>房东涨租 30% 合法吗</td>
+<td>✓ 民法典 510/703</td>
+<td>&lt;2s</td>
+<td>70s (本地 Qwen)</td>
+</tr>
+<tr>
+<td>邻居漏水索赔</td>
+<td>✓ 民法典 1165/1184</td>
+<td>&lt;2s</td>
+<td>45s</td>
+</tr>
+<tr>
+<td>网购假货退款</td>
+<td>✓ 民法典 577/584</td>
+<td>&lt;2s</td>
+<td>102s</td>
+</tr>
+<tr>
+<td>交通追尾责任</td>
+<td>✓ 道交法 76</td>
+<td>&lt;2s</td>
+<td>69s</td>
+</tr>
+</tbody>
+</table>
+<p><strong>4/4 = 100% citation hit, 平均 检索 &lt; 2s, LLM 主导耗时</strong>.</p>
+<h3 id="161-ablation-phase-5g">1.6.1 真实 ablation 实验 (Phase 5g)</h3>
+<p><strong><code>DisableTool(statute_search)</code></strong> vs baseline (跑 q001+q002):
+- 基线: 2/2 citation hit, 102s p50
+- 禁 statute_search: <strong>1/2 hit</strong> (citation 准确率减半), 66s p50, 节省 5861 input tokens</p>
+<p>→ 实验数据印证: <strong>statute_search 工具贡献了 50% 的引用准确率</strong>.</p>
+<hr />
+<h1 id="agent-agent">第二部分: Agent (多 agent 编排)</h1>
+<h2 id="21-agent">2.1 整体 Agent 架构</h2>
+<pre><code>                ┌─────────────────────────────────────┐
+                │  用户问题                            │
+                └──────────────┬──────────────────────┘
+                               │
+                               ▼
+            ┌──────────────────────────────────┐
+            │  Receptionist (接待员, tool-less) │
+            │  - 分类 民事/交通/婚姻/房产/劳动   │
+            │  - 提取 EntityState (key_facts...)│
+            │  - 检测 follow-up                 │
+            │  - 拆分 multi_issues              │
+            └────────────────┬─────────────────┘
+                             │ ReceptionistOutput
+                             ▼
+       ┌──────────────────────────────────────────┐
+       │  Lawyer (5 specialty 变体之一)           │
+       │  ReAct 循环:                              │
+       │   - statute_search (RRF, 最多 3 次)      │
+       │   - case_search                          │
+       │   - history_search (follow-up)           │
+       │   - read_article (精读)                  │
+       │   - ask_secretary (业务 task)            │
+       │   - verify_citation                      │
+       │  Tool-first enforcement (防编造)         │
+       │  → LawyerOutput JSON (5 段式)            │
+       └─────────────┬────────────────────────────┘
+                     │
+                     ▼
+            ┌────────────────────────────────┐
+            │  Supervisor (审核员)            │
+            │  读 lawyer_output + 证据池      │
+            │  调 verify_citation (程序化)    │
+            │  → SupervisorVerdict            │
+            │     pass / revise / reject      │
+            │  若 reject + memory_store: LLM  │
+            │    总结失败模式写 agent_notes/  │
+            └────────┬────────────────────────┘
+                     │
+                     ▼ (clarification mode 短路)
+              ┌──────────────────────┐
+              │  最终返回给用户        │
+              └──────────────────────┘
+</code></pre>
+<h2 id="22-4-agent">2.2 4 个 Agent 详细对照</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Receptionist</th>
+<th>Lawyer</th>
+<th>Secretary</th>
+<th>Supervisor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>是否 ReAct</strong></td>
+<td>❌ 单 LLM call</td>
+<td>✅ 真多步</td>
+<td>✅ 任务级</td>
+<td>❌ 单 LLM call (clarification 模式直接跳过)</td>
+</tr>
+<tr>
+<td><strong>工具数</strong></td>
+<td>0</td>
+<td>7</td>
+<td>3</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>输出 schema</strong></td>
+<td>ReceptionistOutput</td>
+<td>LawyerOutput</td>
+<td>3 业务 schemas</td>
+<td>SupervisorVerdict</td>
+</tr>
+<tr>
+<td><strong>Tool-first 强制</strong></td>
+<td>N/A</td>
+<td>✅ (Phase 2d)</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>prompts 路径</strong></td>
+<td><code>prompts/receptionist/</code></td>
+<td><code>prompts/lawyer/</code> (6 文件)</td>
+<td><code>prompts/secretary/</code></td>
+<td><code>prompts/supervisor/</code></td>
+</tr>
+<tr>
+<td><strong>读 sticky</strong></td>
+<td>✅ (intent="entities_only" 推荐)</td>
+<td>✅ (full)</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>写 sticky</strong></td>
+<td>✅ via runner</td>
+<td>✅ via runner</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>写 turn</strong></td>
+<td>✅ via runner</td>
+<td>✅ via runner</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>写 agent_note</strong></td>
+<td>❌</td>
+<td>❌</td>
+<td>❌</td>
+<td>✅ (verdict=reject 时)</td>
+</tr>
+<tr>
+<td><strong>维护 WorkingMemory</strong></td>
+<td>✅ 累积 evidence</td>
+<td>✅ 累积 evidence</td>
+<td>✅ 读取</td>
+<td>✅ 读取</td>
+</tr>
+</tbody>
+</table>
+<h3 id="221-receptionist">2.2.1 Receptionist</h3>
+<p>文件: <code>multi_agent/agents/receptionist.py</code>, <code>prompts/receptionist/system.md</code></p>
+<p>输出:</p>
+<pre><code class="language-python">ReceptionistOutput(
+    legal_domain=&quot;民事&quot;,
+    case_type=&quot;租赁纠纷&quot;,
+    is_followup=False,
+    multi_issues=[Issue(...), Issue(...)],
+    risk_level=&quot;medium&quot;,
+    urgent=False,
+    reason=&quot;...&quot;,
+)
+</code></pre>
+<h3 id="222-lawyer">2.2.2 Lawyer</h3>
+<p>文件: <code>multi_agent/agents/lawyer.py</code></p>
+<p><strong>5 个 specialty 变体</strong> (按 ReceptionistOutput.legal_domain 路由):
+- <code>specialty_民事.md</code> — 默认 / fallback
+- <code>specialty_房产.md</code> — 租赁/买卖 (强调 1077/703/707)
+- <code>specialty_交通.md</code> — 道交法 + 侵权编
+- <code>specialty_婚姻.md</code> — 婚姻家庭编 + 反家暴法
+- <code>specialty_劳动.md</code> — <strong>明确提醒 corpus 未收录劳动合同法</strong>, Lawyer 知道 fallback
+- <code>specialty_通用.md</code> — 兜底</p>
+<p>公共骨架: <code>prompts/lawyer/_five_section_skeleton.md</code></p>
+<p>输出:</p>
+<pre><code class="language-python">LawyerOutput(
+    mode=&quot;consultation&quot; | &quot;clarification&quot;,  # Phase 5af 加 clarification
+    primary_answer=&quot;一句话核心结论&quot;,
+    citations=[Citation(law_short, article_no, excerpt)],
+    five_section=FiveSection(
+        dispute_analysis=&quot;...&quot;,
+        applicable_laws=&quot;...&quot;,
+        similar_cases=&quot;...&quot;,
+        remedy_suggestions=&quot;...&quot;,
+        risk_assessment=&quot;...&quot;,
+    ),
+    clarifying_questions=[]  # 仅 mode=clarification 时非空
+)
+</code></pre>
+<p><strong>Tool-first enforcement</strong> (Phase 2d):
+- 第一轮模型不调 tool → silent reject + 重定向
+- <code>max_pre_tool_rejections=2</code> budget, fail-fast</p>
+<p><strong>Search 上限</strong> (Phase 5ah):
+- statute_search 最多 3 次, 之后强制 final JSON
+- 找不到法条时显式 fallback "本系统 corpus 未直接收录..."</p>
+<h3 id="223-secretary">2.2.3 Secretary</h3>
+<p>文件: <code>multi_agent/agents/secretary.py</code></p>
+<p>Lawyer 通过 <code>ask_secretary</code> tool 委托业务任务:</p>
+<pre><code class="language-python">SecretaryRequest(task=&quot;contract_review&quot; | &quot;doc_generation&quot; | &quot;doc_interpret&quot;,
+                  context, params)
+↓ 路由到对应业务 tool:
+  - contract_review (Phase 4)
+  - doc_generation
+  - doc_interpret
+</code></pre>
+<p><strong>Agent-as-Tool 模式</strong> (spec ADR-05): <code>SecretaryAsTool</code> 包装 SecretaryAgent, 父 agent (Lawyer) 看到的是普通 Tool, 实际触发子 agent ReAct.</p>
+<h3 id="224-supervisor">2.2.4 Supervisor</h3>
+<p>文件: <code>multi_agent/agents/supervisor.py</code></p>
+<p>输入 (orchestration 串行调用, 不是 Lawyer ReAct 内部):</p>
+<pre><code class="language-python">SupervisorAgent(
+    payload={
+        &quot;user_query&quot;: str,
+        &quot;lawyer_output&quot;: LawyerOutput.model_dump(),
+        &quot;evidence_pool&quot;: [Evidence.model_dump(), ...]  # WorkingMemory
+    }
+)
+</code></pre>
+<p>输出:</p>
+<pre><code class="language-python">SupervisorVerdict(
+    verdict=&quot;pass&quot; | &quot;revise&quot; | &quot;reject&quot;,
+    confidence=0.95,
+    issues=[...],
+    suggested_fix=None,
+    citation_checks=[CitationCheckResult(citation_index, valid, reason)],
+    groundedness=GroundednessCheck(score, ungrounded_claims),
+)
+</code></pre>
+<p><strong>Clarification 短路</strong> (Phase 5af): 当 lawyer_output.mode=="clarification" 时, orchestrator 跳过 Supervisor LLM 直接 verdict=pass (省 25-30s + ~$0.001 成本).</p>
+<p><strong>Reject → agent_note</strong> (Phase 5u): 当 verdict=="reject" 且配置了 note_provider, 自动调本地 Qwen 总结失败模式写入 <code>agent_notes/*.md</code>.</p>
+<h2 id="23">2.3 编排入口</h2>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>runner.run_query(query, agent_factory, provider, ...)</code></td>
+<td>单 agent 跑 (Receptionist 或 Lawyer 或 Secretary 或 Supervisor)</td>
+</tr>
+<tr>
+<td><code>orchestration.supervised.run_with_supervisor(query, lawyer_factory, supervisor_factory, ...)</code></td>
+<td>Lawyer + Supervisor 串行编排 (主入口)</td>
+</tr>
+<tr>
+<td><code>eval.runner.ExperimentRunner.run()</code></td>
+<td>批量 QuerySet 跑评测</td>
+</tr>
+<tr>
+<td><code>eval.ablation_runner.AblationRunner.run(ablations=[...])</code></td>
+<td>多 profile × QuerySet, 算 deltas</td>
+</tr>
+</tbody>
+</table>
+<h2 id="24-provider">2.4 Provider 抽象</h2>
+<p>文件: <code>multi_agent/providers/</code></p>
+<p>3 个 provider + 1 个工厂:</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>接入</th>
+<th>Tool calling</th>
+<th>已知速度 (单次 LLM call)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OpenAICompatibleProvider</code></td>
+<td>OpenAI 兼容 API (vLLM / DeepSeek / SiliconFlow / OpenRouter)</td>
+<td>✅</td>
+<td>5-25s (取决端点)</td>
+</tr>
+<tr>
+<td><code>AnthropicProvider</code></td>
+<td>Anthropic SDK + cache_control</td>
+<td>✅</td>
+<td>5-30s (Opus 慢, Haiku 快)</td>
+</tr>
+<tr>
+<td><code>StubProvider</code></td>
+<td>测试用 scripted</td>
+<td>✅</td>
+<td>0ms</td>
+</tr>
+<tr>
+<td><code>ProviderProfile</code> 工厂</td>
+<td>spec §6.4 — 4 profile (all-local/all-claude/mixed-cloud-judge/mixed-cloud-brain)</td>
+<td>-</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<p>支持 streaming (Phase 2b Task 7), Pydantic-typed <code>LLMResponse</code>/<code>StreamChunk</code>/<code>Usage</code>.</p>
+<h3 id="241-llm">2.4.1 实测可用的 LLM 选项</h3>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Model</th>
+<th>单轮 (Lawyer+Sup)</th>
+<th>成本/轮</th>
+<th>稳定性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>local</code> (vLLM Qwen 3.5-9B)</td>
+<td>qwen3.5-9b</td>
+<td>100-150s</td>
+<td>$0</td>
+<td>✓ 稳定</td>
+</tr>
+<tr>
+<td><code>siliconflow</code></td>
+<td><strong>deepseek-ai/DeepSeek-V3.1</strong></td>
+<td><strong>30-60s</strong></td>
+<td><strong>~$0.003</strong></td>
+<td><strong>✓ 实测稳定</strong></td>
+</tr>
+<tr>
+<td><code>siliconflow</code></td>
+<td>deepseek-ai/DeepSeek-V4-Flash</td>
+<td>25-? (偶尔挂 100s+)</td>
+<td>~$0.0014</td>
+<td>✗ 不稳, 短期内勿用</td>
+</tr>
+<tr>
+<td><code>siliconflow</code></td>
+<td>Qwen/Qwen3-235B-A22B-Instruct-2507</td>
+<td>30-50s (估)</td>
+<td>~$0.003</td>
+<td>待测</td>
+</tr>
+<tr>
+<td><code>deepseek</code> 官方</td>
+<td>deepseek-chat</td>
+<td>40-70s</td>
+<td>~$0.003</td>
+<td>日本不可达 (CloudFront RST)</td>
+</tr>
+<tr>
+<td><code>anthropic</code></td>
+<td>claude-opus-4-7</td>
+<td>50-80s</td>
+<td>~$0.40</td>
+<td>✓</td>
+</tr>
+</tbody>
+</table>
+<h2 id="25-trace">2.5 Trace 系统</h2>
+<p>文件: <code>multi_agent/tracing/</code></p>
+<p>横切关注点 — 每个 agent/tool/LLM 调用都 emit 事件到 <code>events.jsonl</code>:</p>
+<pre><code>RunStarted
+└─ AgentInvoked (lawyer)
+   ├─ LLMRequested → LLMResponded (usage tokens, finish_reason)
+   ├─ ToolCalled (statute_search) → ToolReturned (count, duration_ms)
+   ├─ LLMRequested → LLMResponded
+   ├─ ToolCalled (ask_secretary)
+   │  └─ AgentInvoked (secretary) — 子 agent 嵌套
+   │     ├─ ToolCalled (contract_review) → ToolReturned
+   │     └─ AgentResponded (secretary)
+   │  └─ ToolReturned
+   └─ AgentResponded (lawyer)
+RunFinished (status=ok)
+</code></pre>
+<p><strong>ContextVar span stack</strong> (<code>recorder.py</code>) — 自动维护 <code>parent_id</code> 链, 异步并发安全, 不被 fan-out 打乱.</p>
+<p>派生产物: <code>artifacts/working_memory.json</code> (Phase 5r, spec §5.4.2 序列化).</p>
+<h2 id="26-multi_agenteval">2.6 评测框架 (<code>multi_agent/eval/</code>)</h2>
+<h3 id="261-queryset-querysetpy">2.6.1 QuerySet (<code>queryset.py</code>)</h3>
+<p>YAML 定义查询集:</p>
+<pre><code class="language-yaml">meta: {name: synthetic_seed_v1, created: 2026-05-14}
+queries:
+  - id: q001
+    text: &quot;房东涨租 30%...&quot;
+    cause: 房产纠纷
+    tags: [民事, 租赁]
+    expected:
+      should_cite_any: [民法典-510, 民法典-703]
+      expected_answer_mode: evidence_grounded
+</code></pre>
+<p>实际跑过的: <code>synthetic_seed_v1.yaml</code> (5 条手写种子). spec §7.3 蓝图 (300/5k/30/10 各类) 暂未做.</p>
+<h3 id="262-experimentrunner-runnerpy">2.6.2 ExperimentRunner (<code>runner.py</code>)</h3>
+<pre><code class="language-python">ExperimentRunner(
+    query_set=qs,
+    run_group_name=&quot;qwen_baseline&quot;,
+    runs_root=Path(&quot;runs&quot;),
+    query_runner=async_factory,
+    parallelism=2,
+    judges=[GroundednessJudge, HelpfulnessJudge],  # 可选
+).run() → RunGroup
+</code></pre>
+<p>每个 query → 一个 run_dir, 收集 metrics + 跑 judges.</p>
+<p>输出: <code>run_groups/&lt;name&gt;/{group_meta.yaml, results.jsonl, summary.md}</code>.</p>
+<h3 id="263-metrics-metricspy">2.6.3 自动 metrics (<code>metrics.py</code>)</h3>
+<p><code>derive_run_metrics(run_dir) → RunMetrics</code>:</p>
+<pre><code class="language-python">RunMetrics(
+    total_latency_ms,
+    total_input_tokens, total_output_tokens, cache_read_tokens, cache_hit_rate,
+    cost_usd,                       # Phase 5f
+    agent_invocations,
+    tool_calls_total,
+    react_steps_total,              # Phase 5q
+    supervisor_verdict,
+    final_answer_mode,              # Phase 5q
+    citation_count,                 # Phase 5q
+    errors,
+)
+</code></pre>
+<h3 id="264-judges">2.6.4 Judges</h3>
+<ol>
+<li>
+<p><strong>CitationAccuracyJudge</strong> (<code>judges/citation_accuracy.py</code>, rule-based, Phase 5b)
+   - 比较 <code>Query.expected.should_cite_any</code> vs <code>LawyerOutput.citations</code>
+   - 无 LLM, 0 成本</p>
+</li>
+<li>
+<p><strong>GroundednessJudge</strong> (<code>judges/groundedness.py</code>, LLM-based, Phase 5c)
+   - 用 Claude Opus (spec §7.7) 判断每条 lawyer 陈述是否在 evidence_pool 中可溯源
+   - 输出 <code>{score, ungrounded_claims, rationale}</code></p>
+</li>
+<li>
+<p><strong>HelpfulnessJudge</strong> (<code>judges/helpfulness.py</code>, LLM-based)
+   - 判断答复 directness + actionability + completeness
+   - 输出 <code>{score, missing_aspects, rationale}</code></p>
+</li>
+</ol>
+<h3 id="265-comparator-comparatorpy-phase-5c-5h">2.6.5 Comparator (<code>comparator.py</code>, Phase 5c + 5h)</h3>
+<p>两个 RunGroup 对比 → per-query delta + Winner verdict:</p>
+<pre><code class="language-python">ComparisonReport(
+    per_query=[
+        PerQueryDelta(
+            query_id, latency_delta_ms, in/out_tokens_delta, cost_delta_usd,
+            citation_hit_a, citation_hit_b,
+            groundedness_delta, helpfulness_delta,
+            winner=&quot;A&quot; | &quot;B&quot; | &quot;tie&quot;,
+        ),
+        ...
+    ],
+    winners_a, winners_b, ties,
+)
+</code></pre>
+<p>Winner heuristic: groundedness Δ ≥ 0.05 &gt; citation_hit 差异 &gt; helpfulness Δ ≥ 0.05 &gt; tie.</p>
+<h3 id="266-ablationrunner-ablation_runnerpy-phase-5d">2.6.6 AblationRunner (<code>ablation_runner.py</code>, Phase 5d)</h3>
+<pre><code class="language-python">AblationRunner.run(ablations=[
+    DisableAgent(agent=&quot;supervisor&quot;),
+    SwapModel(agent=&quot;lawyer&quot;, provider=&quot;anthropic&quot;, model=&quot;claude-opus-4-7&quot;),
+    DisableTool(tool=&quot;case_search&quot;),
+    DisableMemory(),
+])
+</code></pre>
+<p>跑 baseline + N ablation × QuerySet, 输出 <code>ablation_summary.md</code> 含 Δ.</p>
+<h3 id="267-latencyprofiler-latencypy-phase-5e">2.6.7 LatencyProfiler (<code>latency.py</code>, Phase 5e)</h3>
+<p>从 events.jsonl 派生 SpanTiming 树 + by-agent/tool/provider/kind 聚合:</p>
+<pre><code>run:run  inc=70640ms exc=120ms
+  agent:lawyer  inc=70300ms exc=2300ms
+    llm:openai_compat:deepseek-ai/DeepSeek-V3.1  inc=12500ms
+    tool:statute_search  inc=850ms
+    llm:...  inc=11200ms
+    ...
+
+by_agent: lawyer=70300ms
+by_tool: statute_search=850ms
+by_provider: openai_compat=68000ms
+</code></pre>
+<p>CLI: <code>python scripts/profile_run.py runs/r_xxx</code>.</p>
+<h2 id="27-scripts">2.7 Scripts (用户接口)</h2>
+<p><code>multi_agent/scripts/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>脚本</th>
+<th>用途</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>serve_qwen_vllm.sh</code></td>
+<td>启动本地 Qwen vLLM (含 tool-call parser)</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>build_statutes_index.py</code></td>
+<td>灌 Chinese-Laws → ma_statutes</td>
+<td>✓ 已建 13722 chunks</td>
+</tr>
+<tr>
+<td><code>build_cases_index.py</code></td>
+<td>灌 laws_data → ma_cases</td>
+<td>待跑</td>
+</tr>
+<tr>
+<td><code>extract_case_citations.py</code></td>
+<td>LLM 抽 lawyer 答复里的法条引用 (Phase 2d 离线工具)</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>benchmark.py</code></td>
+<td>跑 synthetic_seed_v1 → 输出 json + flame</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>run_eval.py</code></td>
+<td>灵活批量评测</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>run_comparison.py</code></td>
+<td>两 profile 对比 (Qwen vs Claude)</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>profile_run.py</code></td>
+<td>单 run flame graph</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>chat.py</code></td>
+<td>交互式 REPL</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><strong><code>chat-ready.sh</code></strong></td>
+<td><strong>已验证可用的一键启动</strong></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>trace_viewer.py</code></td>
+<td>Streamlit 三栏 trace UI</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>test_deepseek.py</code></td>
+<td>DeepSeek / SiliconFlow 连通 smoke</td>
+<td>✓</td>
+</tr>
+</tbody>
+</table>
+<h2 id="28">2.8 测试体系</h2>
+<pre><code>tests/
+├── unit/         (300+ 测试, ~5 分钟全跑)
+│   ├── test_*_schema.py        每个 schema 一个
+│   ├── test_recorder.py
+│   ├── test_*_provider.py
+│   ├── test_*_agent.py
+│   ├── test_*_search.py
+│   ├── test_*_judge.py
+│   ├── test_metrics.py / pricing.py / comparator.py / ablations.py / latency.py
+│   ├── test_compaction.py / test_sticky_intents.py
+│   └── test_*_script.py        scripts subprocess --help smoke
+│
+└── integration/  (15+ 测试, 需 vLLM + Qdrant 真服务)
+    ├── test_retrieval_e2e.py
+    ├── test_lawyer_*_e2e.py    (民事/劳动/交通/多源)
+    ├── test_receptionist_lawyer_e2e.py
+    ├── test_lawyer_via_secretary_e2e.py
+    ├── test_supervised_lawyer_e2e.py
+    ├── test_multi_turn_session_e2e.py
+    ├── test_memory_loop_e2e.py
+    ├── test_ablation_e2e.py    (真 ablation 实验)
+    ├── test_eval_e2e.py
+    └── test_claude_judges_e2e.py  (gated by ANTHROPIC_API_KEY)
+</code></pre>
+<h2 id="29-agent">2.9 已实测的 Agent 行为</h2>
+<p><strong>真实跑过的实验</strong> (Phase 5g / 5i / 5w):</p>
+<ol>
+<li><strong>零编造引用</strong>: Lawyer 在 4/4 查询命中预期法条 (Phase 5w benchmark)</li>
+<li><strong>Supervisor 双层防护</strong>: 4/4 verdict=pass, citation_checks 全部 valid</li>
+<li><strong>真实 ablation</strong>: 禁掉 statute_search 引用准确率 100% → 50%</li>
+<li><strong>多轮记忆</strong>: Turn 2 follow-up 时 Lawyer 自动调 history_search 接续上下文 (Phase 5i)</li>
+<li><strong>clarification 模式</strong>: V4-Flash/V3.1 在信息不足时反问澄清, Supervisor 自动 pass (Phase 5af)</li>
+<li><strong>Corpus 缺失 fallback</strong>: 询问劳动法时 prompt 引导 citations=[], 显式声明 corpus 未收录</li>
+</ol>
+<hr />
+<h1 id="_1">第三部分: 数字总览</h1>
+<h2 id="31">3.1 代码体量</h2>
+<pre><code>multi_agent/        ~6000 行 (核心包)
+  agents/             ~700 行
+  eval/              ~1200 行
+  memory/             ~400 行
+  providers/         ~1100 行
+  schemas/            ~600 行
+  tools/             ~1500 行
+  tracing/            ~400 行
+  orchestration/      ~100 行
+
+tests/              ~5000 行
+prompts/             ~30 个 markdown 文件
+scripts/            ~1200 行 (CLI)
+docs/                spec + plans (~10000 行 markdown)
+</code></pre>
+<h2 id="32-phase-tag-43">3.2 Phase tag (43 个)</h2>
+<pre><code>phase1 / 2a / 2b / 2c / 2d
+phase3 / 3b / 3c / 3d / 3e / 3f
+phase4
+phase5a / 5b / 5c / 5d / 5e / 5f / 5g / 5h / 5i / 5j
+phase5k / 5l / 5m / 5o / 5p / 5q / 5r / 5t / 5u / 5v / 5w / 5x
+phase5aa / 5ab / 5ac / 5ad / 5ae / 5af / 5ag / 5ah / 5ai / 5aj
+</code></pre>
+<h2 id="33-baseline-v31-siliconflow-ma_statutes">3.3 性能 baseline (V3.1 + SiliconFlow + ma_statutes)</h2>
+<ul>
+<li>单轮 p50: <strong>30-60 秒</strong></li>
+<li>单轮 p95: <strong>~100 秒</strong></li>
+<li>每轮成本: <strong>~$0.003</strong></li>
+<li>每轮 tokens: in 3000-5000, out 1000-2000</li>
+<li>引用准确率 (synthetic_seed_v1): <strong>100%</strong> (4/4)</li>
+</ul>
+<hr />
+<h1 id="tldr">第四部分: 实际启动指南 (TL;DR)</h1>
+<h2 id="41">4.1 推荐使用路径 (已验证)</h2>
+<pre><code class="language-bash">export SILICONFLOW_API_KEY=sk-xxx
+conda activate qwen35
+cd /home/xxm/rag/experiments/multi_agent
+bash scripts/chat-ready.sh
+</code></pre>
+<p>打包配置: SiliconFlow + DeepSeek-V3.1 + ma_statutes 全量 + no-supervisor.</p>
+<h2 id="42">4.2 备用启动</h2>
+<pre><code class="language-bash"># 本地 Qwen (慢但 $0)
+python scripts/chat.py --provider local \
+    --statutes-collection ma_statutes \
+    --statutes-sparse data/indexes/statutes_sparse.json
+
+# 严格审核模式 (慢 25s 但有引用校验)
+python scripts/chat.py --provider siliconflow \
+    --model deepseek-ai/DeepSeek-V3.1 \
+    --statutes-collection ma_statutes \
+    --statutes-sparse data/indexes/statutes_sparse.json
+</code></pre>
+<h2 id="43">4.3 离线索引重建</h2>
+<pre><code class="language-bash"># 全量 (15-30 分钟)
+BGE_M3_DEVICE=cuda:0 python scripts/build_statutes_index.py \
+    --corpus-dir /home/xxm/rag/Chinese-Laws/extracted \
+    --collection ma_statutes \
+    --sparse-out data/indexes/statutes_sparse.json \
+    --batch-size 8
+</code></pre>
+<hr />
+<h1 id="_2">附录: 项目文件路径速查</h1>
+<table>
+<thead>
+<tr>
+<th>主题</th>
+<th>路径</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>完整 spec</td>
+<td><code>/home/xxm/rag/docs/superpowers/specs/2026-05-14-multi-agent-experiment-design.md</code></td>
+</tr>
+<tr>
+<td>项目根</td>
+<td><code>/home/xxm/rag/experiments/multi_agent/</code></td>
+</tr>
+<tr>
+<td>索引数据</td>
+<td>Qdrant docker <code>legal-rag-qdrant</code> (host:6433)</td>
+</tr>
+<tr>
+<td>Sparse 索引文件</td>
+<td><code>data/indexes/statutes_sparse.json</code></td>
+</tr>
+<tr>
+<td>内存目录</td>
+<td><code>memory_store_chat/</code> (chat.py 默认) / <code>memory_store/</code> (其他)</td>
+</tr>
+<tr>
+<td>Run 目录</td>
+<td><code>runs/r_XXXXXXXX/</code></td>
+</tr>
+<tr>
+<td>操作手册</td>
+<td><code>RUNBOOK.md</code></td>
+</tr>
+<tr>
+<td>本报告</td>
+<td><code>PIPELINE_REPORT.md</code></td>
+</tr>
+</tbody>
+</table>
+
+</body>
+</html>
