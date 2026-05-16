@@ -14,6 +14,22 @@
 # 此脚本透传所有额外参数给 chat.py, 所以可以叠加任意 --max-* / --no-supervisor 等
 set -euo pipefail
 
+# 防止用户传 --provider/--model 跟脚本硬编码冲突 (会导致 model 名串到错的端点)
+for arg in "$@"; do
+    case "$arg" in
+        --provider|--provider=*|--model|--model=*)
+            echo "❌ chat-ready.sh 是 SiliconFlow + DeepSeek-V3.1 专用包装"
+            echo "   不要传 --provider / --model, 这两个已经写死."
+            echo ""
+            echo "   想换 provider/model? 直接调 chat.py:"
+            echo "     python scripts/chat.py --provider local \\"
+            echo "         --statutes-collection ma_statutes \\"
+            echo "         --statutes-sparse data/indexes/statutes_sparse.json"
+            exit 1
+            ;;
+    esac
+done
+
 # 前置检查
 if [[ -z "${SILICONFLOW_API_KEY:-}" ]]; then
     echo "❌ SILICONFLOW_API_KEY 未设置"
