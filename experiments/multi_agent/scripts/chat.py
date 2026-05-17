@@ -171,10 +171,15 @@ def _print_answer(result: dict, *, with_supervisor: bool) -> None:
 
 
 async def chat_loop(args) -> int:
-    runs_root = Path(args.runs_root)
+    # Phase 6j: chat session 的所有 run 集中到 runs/sessions/<sid>/ 一个目录,
+    # 不再平铺在 runs/ 顶层. session 横向追溯 / 整窝清理都方便.
+    # 没 session 的调用 (benchmark / pytest / 顶层 run_eval) 仍落 runs/ 顶层.
+    session_id = args.session_id or f"chat_{uuid.uuid4().hex[:6]}"
+    runs_top = Path(args.runs_root)
+    runs_root = runs_top / "sessions" / session_id
     runs_root.mkdir(parents=True, exist_ok=True)
 
-    # 索引: 已有 / 临时构造
+    # 索引: 已有 / 临时构造 (sparse 文件还是顶层 / 临时, 跟 runs/ 不耦合)
     cleanup_coll = None
     if args.statutes_collection and args.statutes_sparse:
         coll = args.statutes_collection
@@ -182,7 +187,7 @@ async def chat_loop(args) -> int:
         print(f"使用现有索引: {coll}")
     else:
         coll = f"chat_seed_{uuid.uuid4().hex[:6]}"
-        sparse = runs_root / f"{coll}_sparse.json"
+        sparse = runs_top / f"{coll}_sparse.json"
         print(f"构建临时种子索引 {coll} ({len(_SEED_CHUNKS)} 条法条)... ", end="", flush=True)
         _build_seed_index(coll, sparse)
         cleanup_coll = coll
@@ -190,7 +195,6 @@ async def chat_loop(args) -> int:
 
     # Memory
     store = MarkdownMemoryStore(root=Path(args.memory_root))
-    session_id = args.session_id or f"chat_{uuid.uuid4().hex[:6]}"
     encoder = DenseEncoder()
     history_coll = "ma_user_history_chat"
     turn_indexer = TurnIndexer(collection_name=history_coll, dense_encoder=encoder)
@@ -243,6 +247,7 @@ async def chat_loop(args) -> int:
 
     print(f"会话 session_id = {session_id}")
     print(f"记忆目录: {Path(args.memory_root).resolve()}")
+    print(f"Trace 目录: {runs_root.resolve()}")  # Phase 6j: 显示本 session 专属 runs/ 路径
     print(f"Supervisor: {'开启' if not args.no_supervisor else '关闭'}")
 
     # 检测非交互 TTY — 常见原因: `conda run` 默认捕获 stdin
