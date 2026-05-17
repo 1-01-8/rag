@@ -117,9 +117,21 @@ async def run_query(
             agents_invoked=[agent.name] if agent is not None else [],
         )
         memory_store.append_turn(session_id, turn)
-        if turn_indexer is not None:
-            await turn_indexer.index_turn(session_id=session_id, turn=turn)
         memory_store.write_sticky(sticky)
+
+        # Phase 6e: 索引到 ma_user_history 在后台跑, 不阻塞返回
+        # (bge-m3 encode + Qdrant upsert 约 1-3 秒, 用户不应该等)
+        if turn_indexer is not None:
+            import asyncio
+            async def _bg_index():
+                try:
+                    await turn_indexer.index_turn(session_id=session_id, turn=turn)
+                except Exception:
+                    # Best-effort: 索引失败不影响主流程, 也不抛
+                    pass
+            # fire-and-forget; 在 Python 3.11+ 上是 detached task
+            # 用 ensure_future 兼容更广; loop.create_task 也行
+            asyncio.ensure_future(_bg_index())
 
         # Spec §5.4.1: auto-compact when session exceeds threshold.
         # Only runs when caller opts in with both compaction_provider + compaction_model.

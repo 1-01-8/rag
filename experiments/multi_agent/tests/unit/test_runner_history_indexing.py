@@ -37,6 +37,13 @@ async def test_run_query_indexes_turn_when_indexer_supplied(tmp_path):
         turn_indexer=indexer,
     )
     assert result["status"] == "ok"
+    # Phase 6e: index_turn 是 fire-and-forget 后台 task, 不阻塞 run_query 返回
+    # 让背景 task 跑一下再断言
+    import asyncio
+    for _ in range(10):
+        if indexer.index_turn.await_count > 0:
+            break
+        await asyncio.sleep(0.05)
     indexer.index_turn.assert_awaited_once()
     call_kwargs = indexer.index_turn.await_args.kwargs
     assert call_kwargs["session_id"] == "s1"

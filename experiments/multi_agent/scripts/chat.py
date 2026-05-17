@@ -229,11 +229,16 @@ async def chat_loop(args) -> int:
         model_name = args.model or "qwen3.5-9b"
         print(f"Provider: 本地 vLLM  model={model_name}")
 
-    statute_search = StatuteSearchTool(collection_name=coll, sparse_artifact_path=sparse)
+    # Phase 6d: 注入 chat.py 上面已经构造的 encoder, 避免 StatuteSearchTool 内部
+    # 重新加载 bge-m3 (重复加载会多吃 ~1.5GB 显存 + 5-10 秒启动时间)
+    statute_search = StatuteSearchTool(
+        collection_name=coll, sparse_artifact_path=sparse,
+        dense_encoder=encoder,  # 复用 history 那个
+    )
 
-    # 预热 statute_search 的 lazy encoder, 避免首次问问题时再触发 Loading weights
+    # 预热 sparse_encoder (dense 是注入的, 已经加载好了)
     print("预热检索器... ", end="", flush=True)
-    statute_search._ensure_encoders()  # 强制加载 bge-m3 + sparse
+    statute_search._ensure_encoders()
     print("ok")
 
     print(f"会话 session_id = {session_id}")

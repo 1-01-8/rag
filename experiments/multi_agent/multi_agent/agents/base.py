@@ -80,17 +80,30 @@ class BaseAgent(BaseModel, ABC):
         post_tool_reminder_added: bool = False  # inject citation-only reminder once
 
         for step in range(1, self.max_steps + 1):
-            response = await self.provider.complete(
-                messages=messages,
-                model=self.model or getattr(self.provider, "default_model", "stub-1"),
-                tools=tool_specs,
-                response_format=self.output_schema(),
-                recorder=self.recorder,
-                agent_name=self.name,
-            )
+            # Phase 6c: 单次 LLM 调用加 timeout — SiliconFlow 偶尔挂 100s+, 不让它无限等
+            try:
+                response = await asyncio.wait_for(
+                    self.provider.complete(
+                        messages=messages,
+                        model=self.model or getattr(self.provider, "default_model", "stub-1"),
+                        tools=tool_specs,
+                        response_format=self.output_schema(),
+                        recorder=self.recorder,
+                        agent_name=self.name,
+                    ),
+                    timeout=self.timeout_seconds,
+                )
+            except asyncio.TimeoutError as e:
+                from multi_agent.errors import ProviderUnavailable
+                raise ProviderUnavailable(
+                    f"LLM call timeout > {self.timeout_seconds}s (step {step})"
+                ) from e
 
             if response.tool_calls:
-                if len(response.tool_calls) > self.max_tool_calls:
+                # Phase 6a fix: max_tool_calls 是 RUN 内累计, 不是单次响应
+                # 防止模型每个 step 重复 search 直到 max_steps 超时
+                next_total = tool_calls_made + len(response.tool_calls)
+                if next_total > self.max_tool_calls:
                     from multi_agent.errors import BudgetExceeded
                     raise BudgetExceeded(self.name, "max_tool_calls", self.max_tool_calls)
                 # Fan-out: dispatch all tool calls concurrently
