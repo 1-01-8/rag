@@ -32,9 +32,11 @@ from multi_agent.tools.retrievers.history_search import HistorySearchTool
 from multi_agent.providers.openai_compatible import OpenAICompatibleProvider
 from multi_agent.agents.lawyer import LawyerAgent
 from multi_agent.agents.supervisor import SupervisorAgent
+from multi_agent.agents.receptionist import ReceptionistAgent  # Phase 6l
 from multi_agent.orchestration.supervised import run_with_supervisor
 from multi_agent.memory.store import MarkdownMemoryStore
 from multi_agent.runner import run_query
+from multi_agent.schemas.memory import StickyContext, KeyFact, EntityState  # Phase 6l
 
 
 # 内置 composite seed corpus — 覆盖民事/交通常见法条
@@ -248,6 +250,8 @@ async def chat_loop(args) -> int:
     print(f"会话 session_id = {session_id}")
     print(f"记忆目录: {Path(args.memory_root).resolve()}")
     print(f"Trace 目录: {runs_root.resolve()}")  # Phase 6j: 显示本 session 专属 runs/ 路径
+    print(f"Receptionist: {'关闭 (--skip-receptionist)' if args.skip_receptionist else '开启'}")
+    print(f"Compaction:   {'开启 (>5 轮自动压缩)' if args.compact_history else '关闭'}")
     print(f"Supervisor: {'开启' if not args.no_supervisor else '关闭'}")
 
     # 检测非交互 TTY — 常见原因: `conda run` 默认捕获 stdin
@@ -314,6 +318,87 @@ async def chat_loop(args) -> int:
                         print(f" {elapsed}s(L{llm_n}/T{tool_n}){warn}", end="", flush=True)
             hb = asyncio.create_task(_heartbeat())
 
+            # ─────────────────────────────────────────────────────────────
+            # Phase 6l: 每轮先调 Receptionist 做意图分类 + 实体抽取, 输出
+            # → merge 进 sticky.legal_domain / case_type / entity_state
+            # → primary_specialty 自动路由 Lawyer (覆盖 args.specialty)
+            # 跳过条件: --skip-receptionist 或 turn 1 用户问得短/明显 smalltalk
+            # ─────────────────────────────────────────────────────────────
+            recep_specialty: str | None = None
+            if not args.skip_receptionist:
+                # Receptionist 自己也用 ULID 子 run (落 sessions/<sid>/)
+                from multi_agent.tracing.recorder import Recorder
+                from multi_agent.tracing.ulid_gen import fresh_run_id
+                from multi_agent.agents.base import AgentInput
+                from multi_agent.schemas.events import RunStarted, RunFinished
+
+                recep_run_id = fresh_run_id()
+                recep_dir = runs_root / recep_run_id
+                recep_rec = Recorder(run_id=recep_run_id, run_dir=recep_dir)
+                recep_rec.set_meta(query=question, config={"role": "receptionist"})
+                try:
+                    recep_rec.emit(RunStarted(
+                        event_id=recep_rec.fresh_event_id(), run_id=recep_run_id,
+                        timestamp=recep_rec.now(), parent_id=None,
+                        query=question, config={"role": "receptionist"},
+                    ))
+                    recep = ReceptionistAgent(
+                        name="receptionist", role="triage",
+                        provider=provider, recorder=recep_rec,
+                        model=model_name,
+                        max_steps=2, max_tool_calls=0, max_pre_tool_rejections=0,
+                    )
+                    # 把当前 sticky 给 Receptionist 当上下文
+                    cur_sticky = store.read_sticky(session_id)
+                    recep_sticky_ctx = cur_sticky.model_dump() if cur_sticky else None
+                    recep_out = await recep.run(AgentInput(payload={
+                        "query": question,
+                        "sticky_context": recep_sticky_ctx,
+                    }))
+                    recep_payload = recep_out.payload  # ReceptionistOutput
+                    recep_specialty = recep_payload.primary_specialty or None
+
+                    # Merge → sticky (在 run_query 之前写, 让 run_query 读到最新版本)
+                    sticky = cur_sticky or StickyContext(session_id=session_id)
+                    if recep_payload.primary_specialty:
+                        sticky.legal_domain = recep_payload.primary_specialty
+                    if recep_payload.case_type:
+                        sticky.case_type = recep_payload.case_type
+                    # initial_facts (list[str]) → entity_state.key_facts (list[KeyFact])
+                    # 累积去重, 不覆盖
+                    if not sticky.entity_state:
+                        sticky.entity_state = EntityState()
+                    existing_facts = {kf.fact for kf in sticky.entity_state.key_facts}
+                    for fact in (recep_payload.initial_facts or []):
+                        if fact and fact not in existing_facts:
+                            sticky.entity_state.key_facts.append(
+                                KeyFact(fact=fact, confidence="high", source_turn=turn),
+                            )
+                            existing_facts.add(fact)
+                    store.write_sticky(sticky)
+                    recep_rec.emit(RunFinished(
+                        event_id=recep_rec.fresh_event_id(), run_id=recep_run_id,
+                        timestamp=recep_rec.now(), parent_id=None,
+                        status="ok",
+                        final_answer=recep_out.payload.model_dump_json(),
+                        error=None,
+                    ))
+                except Exception as e:
+                    # Receptionist 失败不阻断主流程, 继续走默认 specialty
+                    try:
+                        recep_rec.emit(RunFinished(
+                            event_id=recep_rec.fresh_event_id(), run_id=recep_run_id,
+                            timestamp=recep_rec.now(), parent_id=None,
+                            status="error", final_answer=None, error=f"{type(e).__name__}: {e}",
+                        ))
+                    except Exception:
+                        pass
+                finally:
+                    recep_rec.close()
+
+            # 最终 specialty: Receptionist 推荐 > 用户 --specialty 默认
+            lawyer_specialty = recep_specialty or args.specialty
+
             tools_for_lawyer = [statute_search]
             if turn > 1:
                 tools_for_lawyer.append(history_search)
@@ -375,12 +460,14 @@ async def chat_loop(args) -> int:
                         agent_factory=lambda p, r: LawyerAgent(
                             name="lawyer", role="advisor", provider=p, recorder=r,
                             tools=[],  # 无 tools, BaseAgent ReAct 走单次 LLM 即返
-                            model=model_name, specialty=args.specialty,
+                            model=model_name, specialty=lawyer_specialty,
                             max_steps=2, max_tool_calls=0, max_pre_tool_rejections=0,
                         ),
                         provider=provider, runs_root=runs_root,
                         session_id=session_id, memory_store=store,
                         turn_indexer=turn_indexer,
+                        compaction_provider=(provider if args.compact_history else None),
+                        compaction_model=(model_name if args.compact_history else None),
                         agent_input_extra={
                             "prefetched_evidences": prefetched_evs,
                             **ctx_extra,  # Phase 6h: 上下文一并注入
@@ -393,7 +480,7 @@ async def chat_loop(args) -> int:
                         agent_factory=lambda p, r: LawyerAgent(
                             name="lawyer", role="advisor", provider=p, recorder=r,
                             tools=tools_for_lawyer,
-                            model=model_name, specialty=args.specialty,
+                            model=model_name, specialty=lawyer_specialty,
                             max_steps=args.max_steps,
                             max_tool_calls=args.max_tool_calls,
                             max_pre_tool_rejections=2,
@@ -401,6 +488,8 @@ async def chat_loop(args) -> int:
                         provider=provider, runs_root=runs_root,
                         session_id=session_id, memory_store=store,
                         turn_indexer=turn_indexer,
+                        compaction_provider=(provider if args.compact_history else None),
+                        compaction_model=(model_name if args.compact_history else None),
                         agent_input_extra=ctx_extra,  # Phase 6h: 多轮上下文
                     )
                     _print_answer(result, with_supervisor=False)
@@ -410,7 +499,7 @@ async def chat_loop(args) -> int:
                         lawyer_factory=lambda p, r: LawyerAgent(
                             name="lawyer", role="advisor", provider=p, recorder=r,
                             tools=tools_for_lawyer,
-                            model=model_name, specialty=args.specialty,
+                            model=model_name, specialty=lawyer_specialty,
                             max_steps=args.max_steps,
                             max_tool_calls=args.max_tool_calls,
                             max_pre_tool_rejections=2,
@@ -495,6 +584,10 @@ def main() -> int:
     p.add_argument("--fast", action="store_true",
                    help="快路径: 预检索 + 单次 LLM (1 LLM call/轮 vs 默认 2). "
                         "implies --no-supervisor, max_tool_calls=0")
+    p.add_argument("--skip-receptionist", action="store_true",
+                   help="跳过 Receptionist 阶段 (省 10-15s/轮, 但 legal_domain/case_type/entity_state 不会自动填)")
+    p.add_argument("--compact-history", action="store_true",
+                   help="开启 session 超过 5 轮自动 LLM 压缩老 turn 写 history_summary (Phase 3c)")
     p.add_argument("--no-supervisor", action="store_true",
                    help="跳过审核员加速 (但失去引用真实性校验)")
     args = p.parse_args()
