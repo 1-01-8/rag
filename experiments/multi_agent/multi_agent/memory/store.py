@@ -227,6 +227,33 @@ class MarkdownMemoryStore:
             out.append(Turn.model_validate(fm))
         return out
 
+    def patch_turn(self, session_id: str, turn_no: int, **updates) -> Path | None:
+        """Phase 6m: 事后更新某轮的指定字段 (e.g. supervisor_verdict 跨 run_query 边界后补).
+
+        定位 turns/{turn_no:03d}-*.md, 读 frontmatter → merge updates →
+        atomic rewrite. 找不到 / 校验失败 → 返 None (不抛, best-effort).
+        """
+        td = self._turns_dir(session_id)
+        if not td.exists():
+            return None
+        prefix = f"{turn_no:03d}-"
+        matches = sorted(td.glob(f"{prefix}*.md"))
+        if not matches:
+            return None
+        path = matches[0]
+        try:
+            fm, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        fm.update(updates)
+        try:
+            turn = Turn.model_validate(fm)
+        except Exception:
+            return None
+        data = _serialize_pydantic(turn.model_dump())
+        _atomic_write(path, _dump_frontmatter(data) + body)
+        return path
+
     # --- Agent notes ---
 
     def write_note(self, note: AgentNote) -> Path:

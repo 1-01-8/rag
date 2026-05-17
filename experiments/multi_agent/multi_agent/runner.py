@@ -22,6 +22,7 @@ async def run_query(
     compaction_provider: LLMProvider | None = None,
     compaction_model: str | None = None,
     agent_input_extra: dict[str, Any] | None = None,
+    extra_agents_invoked: list[str] | None = None,
 ) -> dict:
     """Top-level entry. Guarantees a RunFinished event regardless of outcome.
 
@@ -112,6 +113,56 @@ async def run_query(
             sticky.linked_runs.append(run_id)
         existing_turns = memory_store.recent_turns(session_id, n=999)
         next_turn_no = max((t.turn for t in existing_turns), default=0) + 1
+
+        # Phase 6m: 从 final_answer JSON + events.jsonl 抽更多 Turn 字段
+        # 之前 Turn 只填 6 个字段, 其他 (answer_mode / citations / total_tokens) 默认.
+        parsed_payload: dict = {}
+        if final_answer:
+            try:
+                import json as _json
+                p = _json.loads(final_answer)
+                if isinstance(p, dict):
+                    parsed_payload = p
+            except (ValueError, TypeError):
+                pass
+
+        # answer_mode (consultation / clarification / 默认)
+        turn_answer_mode = parsed_payload.get("mode") or "evidence_grounded"
+
+        # turn_citations (跟 sticky.cited_articles 同步, 但 turn 只记本轮的)
+        turn_citations: list[CitedArticle] = []
+        for cit in (parsed_payload.get("citations") or []):
+            if not isinstance(cit, dict):
+                continue
+            law = (cit.get("law_short") or "").strip()
+            art = (cit.get("article_no") or "").strip()
+            if law and art:
+                turn_citations.append(CitedArticle(
+                    law=law, article=art, from_turn=next_turn_no,
+                ))
+
+        # total_tokens: 从 events.jsonl 累加 LLMResponded.usage (best-effort)
+        turn_total_tokens = 0
+        try:
+            import json as _json
+            for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                e = _json.loads(line)
+                if e.get("event_type") == "LLMResponded":
+                    u = e.get("usage") or {}
+                    turn_total_tokens += int(u.get("input_tokens", 0) or 0)
+                    turn_total_tokens += int(u.get("output_tokens", 0) or 0)
+        except Exception:
+            pass
+
+        # agents_invoked: 当前 run 的 agent + 调用方传入的额外 agent (例如 Receptionist 在 chat.py 层跑)
+        agents = []
+        if extra_agents_invoked:
+            agents.extend(extra_agents_invoked)
+        if agent is not None and agent.name not in agents:
+            agents.append(agent.name)
+
         turn = Turn(
             turn=next_turn_no,
             run_id=run_id,
@@ -119,7 +170,10 @@ async def run_query(
             finished_at=datetime.now(),
             question=query,
             final_answer=final_answer or "",
-            agents_invoked=[agent.name] if agent is not None else [],
+            answer_mode=turn_answer_mode,
+            agents_invoked=agents,
+            total_tokens=turn_total_tokens,
+            citations=turn_citations,
         )
         memory_store.append_turn(session_id, turn)
 

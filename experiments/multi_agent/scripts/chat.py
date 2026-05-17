@@ -398,6 +398,8 @@ async def chat_loop(args) -> int:
 
             # 最终 specialty: Receptionist 推荐 > 用户 --specialty 默认
             lawyer_specialty = recep_specialty or args.specialty
+            # Phase 6m: agent 调用链 — Receptionist 跑了才加 (失败回退时为 None)
+            extra_agents = ["receptionist"] if (not args.skip_receptionist and recep_specialty is not None) else []
 
             tools_for_lawyer = [statute_search]
             if turn > 1:
@@ -472,6 +474,7 @@ async def chat_loop(args) -> int:
                             "prefetched_evidences": prefetched_evs,
                             **ctx_extra,  # Phase 6h: 上下文一并注入
                         },
+                        extra_agents_invoked=extra_agents,
                     )
                     _print_answer(result, with_supervisor=False)
                 elif args.no_supervisor:
@@ -491,6 +494,7 @@ async def chat_loop(args) -> int:
                         compaction_provider=(provider if args.compact_history else None),
                         compaction_model=(model_name if args.compact_history else None),
                         agent_input_extra=ctx_extra,  # Phase 6h: 多轮上下文
+                        extra_agents_invoked=extra_agents,
                     )
                     _print_answer(result, with_supervisor=False)
                 else:
@@ -511,24 +515,32 @@ async def chat_loop(args) -> int:
                         lawyer_provider=provider, supervisor_provider=provider,
                         runs_root=runs_root,
                         agent_input_extra=ctx_extra,  # Phase 6h: 多轮上下文
+                        extra_agents_invoked=extra_agents,  # Phase 6m
+                        session_id=session_id,             # 让 supervised 走 memory 路径
+                        memory_store=store,
+                        turn_indexer=turn_indexer,
                     )
                     _print_answer(result, with_supervisor=True)
-                    # 持久化 turn (run_with_supervisor 没接 memory; 单独写)
-                    from datetime import datetime
-                    from multi_agent.schemas.memory import Turn, StickyContext
-                    sticky = store.read_sticky(session_id) or StickyContext(session_id=session_id)
-                    if result["lawyer_run_id"] not in sticky.linked_runs:
-                        sticky.linked_runs.append(result["lawyer_run_id"])
-                    existing = store.recent_turns(session_id, n=999)
-                    next_no = max((t.turn for t in existing), default=0) + 1
-                    final_answer = result["lawyer_result"].get("final_answer") or ""
-                    t = Turn(turn=next_no, run_id=result["lawyer_run_id"],
-                            started_at=datetime.now(), finished_at=datetime.now(),
-                            question=question, final_answer=final_answer,
-                            agents_invoked=["lawyer", "supervisor"])
-                    store.append_turn(session_id, t)
-                    await turn_indexer.index_turn(session_id=session_id, turn=t)
-                    store.write_sticky(sticky)
+                    # Phase 6m: Lawyer turn 已经由 run_query 写好, 在 supervisor 跑完后
+                    # patch supervisor_verdict + 把 supervisor 加进 agents_invoked
+                    try:
+                        existing_turns = store.recent_turns(session_id, n=1)
+                        if existing_turns:
+                            last_turn = existing_turns[0]
+                            verdict = (result.get("supervisor_verdict") or {}).get("verdict") or ""
+                            new_agents = list(last_turn.agents_invoked)
+                            if "supervisor" not in new_agents:
+                                new_agents.append("supervisor")
+                            store.patch_turn(
+                                session_id, last_turn.turn,
+                                supervisor_verdict=verdict,
+                                agents_invoked=new_agents,
+                            )
+                    except Exception:
+                        pass
+                    # Phase 6m: 旧手写 Turn 路径已删 — run_with_supervisor 内部
+                    # run_query 配 session_id+memory_store 会写 Turn + sticky.
+                    # turn_indexer 也由 run_query fire-and-forget 触发.
             except Exception as e:
                 # 特殊处理: Lawyer 输出非 JSON (反问澄清 / 拒答) → 提取并显示给用户
                 err_name = type(e).__name__

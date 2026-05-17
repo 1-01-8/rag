@@ -37,6 +37,8 @@ async def run_with_supervisor(
     note_provider: LLMProvider | None = None,
     note_model: str | None = None,
     agent_input_extra: dict[str, Any] | None = None,  # Phase 6h: 上下文透传
+    extra_agents_invoked: list[str] | None = None,    # Phase 6m: Turn.agents_invoked 透传
+    turn_indexer: Any = None,                         # Phase 6m: turn 索引透传
 ) -> dict[str, Any]:
     """Run Lawyer via run_query, then run Supervisor on the lawyer output.
 
@@ -70,6 +72,8 @@ async def run_with_supervisor(
         session_id=session_id,
         memory_store=memory_store,
         agent_input_extra=agent_input_extra,  # Phase 6h 透传
+        extra_agents_invoked=extra_agents_invoked,  # Phase 6m: Turn.agents_invoked
+        turn_indexer=turn_indexer,                  # Phase 6m: 用户历史索引
     )
 
     # Extract Lawyer's evidence pool from WorkingMemory.
