@@ -348,20 +348,22 @@ async def chat_loop(args) -> int:
                     # Phase 6f 快路径: 先调一次 statute_search 预检索, 注入 evidences,
                     # Lawyer 不带 tools 走单次 LLM 出 final JSON.
                     # 常规对话 2 LLM call → 1, 单轮 30-60s → 10-25s.
+                    # Phase 6i: prefetch 走 /tmp 临时 recorder, 不污染 runs/ 目录
+                    import tempfile
                     from multi_agent.tools.retrievers.statute_search import StatuteSearchArgs
                     from multi_agent.tracing.recorder import Recorder
                     from multi_agent.tracing.ulid_gen import fresh_run_id
 
-                    # 临时 recorder 给 prefetch (不污染主 run 的 trace)
                     pre_run_id = fresh_run_id()
-                    pre_rec = Recorder(run_id=pre_run_id, run_dir=runs_root / pre_run_id)
-                    try:
-                        prefetch_result = await statute_search.call(
-                            StatuteSearchArgs(query=question, k=5), pre_rec,
-                        )
-                        prefetched_evs = (prefetch_result.payload or {}).get("evidences", [])
-                    finally:
-                        pre_rec.close()
+                    with tempfile.TemporaryDirectory(prefix="prefetch_") as pre_tmp:
+                        pre_rec = Recorder(run_id=pre_run_id, run_dir=Path(pre_tmp))
+                        try:
+                            prefetch_result = await statute_search.call(
+                                StatuteSearchArgs(query=question, k=5), pre_rec,
+                            )
+                            prefetched_evs = (prefetch_result.payload or {}).get("evidences", [])
+                        finally:
+                            pre_rec.close()
 
                     result = await run_query(
                         query=question,

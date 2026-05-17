@@ -106,15 +106,44 @@ async def run_with_supervisor(
         }
 
     # Run Supervisor in its own isolated run/recorder.
+    # Phase 6i: 完整 emit RunStarted/RunFinished, 不再产 "半截" run_dir
+    from multi_agent.schemas.events import RunStarted, RunFinished
     sup_run_id = fresh_run_id()
-    sup_recorder = Recorder(run_id=sup_run_id, run_dir=Path(runs_root) / sup_run_id)
-    supervisor = supervisor_factory(supervisor_provider, sup_recorder)
-    sup_output = await supervisor.run(AgentInput(payload={
-        "user_query": query,
-        "lawyer_output": lawyer_out_dict,
-        "evidence_pool": evidence_pool,
-    }))
-    sup_recorder.close()
+    sup_run_dir = Path(runs_root) / sup_run_id
+    sup_recorder = Recorder(run_id=sup_run_id, run_dir=sup_run_dir)
+    sup_recorder.set_meta(query=f"[supervisor of lawyer_run={lawyer_result['run_id']}] {query}",
+                          config={"role": "supervisor",
+                                  "lawyer_run_id": lawyer_result["run_id"]})
+    sup_status = "ok"
+    sup_error: str | None = None
+    sup_output = None
+    try:
+        sup_recorder.emit(RunStarted(
+            event_id=sup_recorder.fresh_event_id(), run_id=sup_run_id,
+            timestamp=sup_recorder.now(), parent_id=None,
+            query=query, config={"role": "supervisor"},
+        ))
+        supervisor = supervisor_factory(supervisor_provider, sup_recorder)
+        sup_output = await supervisor.run(AgentInput(payload={
+            "user_query": query,
+            "lawyer_output": lawyer_out_dict,
+            "evidence_pool": evidence_pool,
+        }))
+    except Exception as e:
+        sup_status = "error"
+        sup_error = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        try:
+            sup_recorder.emit(RunFinished(
+                event_id=sup_recorder.fresh_event_id(), run_id=sup_run_id,
+                timestamp=sup_recorder.now(), parent_id=None,
+                status=sup_status,
+                final_answer=(sup_output.payload.model_dump_json() if sup_output else None),
+                error=sup_error,
+            ))
+        finally:
+            sup_recorder.close()
 
     verdict_dict = sup_output.payload.model_dump()
 
