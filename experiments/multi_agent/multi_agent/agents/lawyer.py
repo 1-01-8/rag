@@ -36,10 +36,31 @@ class LawyerAgent(BaseAgent):
         return LawyerOutput
 
     def _render_input(self, input) -> str:
-        """If sub_cases present (multi-issue), inject them as a numbered list."""
+        """If sub_cases present (multi-issue), inject them as a numbered list.
+
+        Phase 6f fast-path: if payload contains 'prefetched_evidences', inject
+        them directly into the user message — Lawyer is constructed without
+        tools, so it must answer in a single LLM call based on these.
+        """
+        import json as _json
         payload = input.payload
         query = str(payload.get("query", ""))
+        prefetched = payload.get("prefetched_evidences")
         sub_cases = payload.get("sub_cases", [])
+
+        parts: list[str] = []
+        if prefetched:
+            # Fast path: 把检索结果作为已知 evidence 注入, 让 Lawyer 一次性出 final JSON
+            parts.append(f"用户咨询: {query}")
+            parts.append("")
+            parts.append("以下是已经检索好的相关法条 (你必须从这里选择 citation, 不要再调任何工具):")
+            parts.append("```json")
+            parts.append(_json.dumps(prefetched, ensure_ascii=False, indent=2))
+            parts.append("```")
+            parts.append("")
+            parts.append("请基于上述法条直接撰写五段式 JSON 答复. mode 设为 'consultation' (或信息不足时设 'clarification'). citations 只能来自上述检索结果.")
+            return "\n".join(parts)
+
         if not sub_cases:
             return query
         lines = [f"用户咨询: {query}", "", "本案包含以下独立子议题(请逐一回答):"]

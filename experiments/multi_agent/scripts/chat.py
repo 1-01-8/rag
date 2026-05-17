@@ -314,7 +314,40 @@ async def chat_loop(args) -> int:
                 tools_for_lawyer.append(history_search)
 
             try:
-                if args.no_supervisor:
+                if args.fast:
+                    # Phase 6f 快路径: 先调一次 statute_search 预检索, 注入 evidences,
+                    # Lawyer 不带 tools 走单次 LLM 出 final JSON.
+                    # 常规对话 2 LLM call → 1, 单轮 30-60s → 10-25s.
+                    from multi_agent.tools.retrievers.statute_search import StatuteSearchArgs
+                    from multi_agent.tracing.recorder import Recorder
+                    from multi_agent.tracing.ulid_gen import fresh_run_id
+
+                    # 临时 recorder 给 prefetch (不污染主 run 的 trace)
+                    pre_run_id = fresh_run_id()
+                    pre_rec = Recorder(run_id=pre_run_id, run_dir=runs_root / pre_run_id)
+                    try:
+                        prefetch_result = await statute_search.call(
+                            StatuteSearchArgs(query=question, k=5), pre_rec,
+                        )
+                        prefetched_evs = (prefetch_result.payload or {}).get("evidences", [])
+                    finally:
+                        pre_rec.close()
+
+                    result = await run_query(
+                        query=question,
+                        agent_factory=lambda p, r: LawyerAgent(
+                            name="lawyer", role="advisor", provider=p, recorder=r,
+                            tools=[],  # 无 tools, BaseAgent ReAct 走单次 LLM 即返
+                            model=model_name, specialty=args.specialty,
+                            max_steps=2, max_tool_calls=0, max_pre_tool_rejections=0,
+                        ),
+                        provider=provider, runs_root=runs_root,
+                        session_id=session_id, memory_store=store,
+                        turn_indexer=turn_indexer,
+                        agent_input_extra={"prefetched_evidences": prefetched_evs},
+                    )
+                    _print_answer(result, with_supervisor=False)
+                elif args.no_supervisor:
                     result = await run_query(
                         query=question,
                         agent_factory=lambda p, r: LawyerAgent(
@@ -417,6 +450,9 @@ def main() -> int:
                    help="Lawyer ReAct 最多步数 (默认 4)")
     p.add_argument("--max-tool-calls", type=int, default=4,
                    help="Lawyer 最多工具调用数 (默认 4, 避免 LLM 反复 search)")
+    p.add_argument("--fast", action="store_true",
+                   help="快路径: 预检索 + 单次 LLM (1 LLM call/轮 vs 默认 2). "
+                        "implies --no-supervisor, max_tool_calls=0")
     p.add_argument("--no-supervisor", action="store_true",
                    help="跳过审核员加速 (但失去引用真实性校验)")
     args = p.parse_args()

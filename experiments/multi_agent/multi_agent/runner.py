@@ -21,6 +21,7 @@ async def run_query(
     turn_indexer=None,
     compaction_provider: LLMProvider | None = None,
     compaction_model: str | None = None,
+    agent_input_extra: dict[str, Any] | None = None,
 ) -> dict:
     """Top-level entry. Guarantees a RunFinished event regardless of outcome.
 
@@ -54,7 +55,11 @@ async def run_query(
             query=query, config=(config or {}),
         ))
         agent = agent_factory(provider, recorder)
-        output = await agent.run(AgentInput(payload={"query": query}))
+        # Phase 6f: 允许 caller 注入额外 payload (例如 prefetched_evidences for fast-path)
+        payload = {"query": query}
+        if agent_input_extra:
+            payload.update(agent_input_extra)
+        output = await agent.run(AgentInput(payload=payload))
         final_answer = output.payload.model_dump_json()
     except Exception as e:
         status = "error"
