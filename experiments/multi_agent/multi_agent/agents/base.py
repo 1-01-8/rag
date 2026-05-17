@@ -145,12 +145,28 @@ class BaseAgent(BaseModel, ABC):
                     post_tool_reminder_added = True
                 continue
 
-            # No tool calls → enforce tool-first: if tools are available and none have
-            # been called yet, reject the premature answer and demand retrieval first.
-            # IMPORTANT: do NOT append the premature answer to context — doing so causes
-            # the model to anchor on its fabricated citations and re-use them even after
-            # real tool results arrive.
+            # No tool calls → 两步处理:
+            #   1. 先看模型输出是否能 parse 成合法的 clarification mode JSON
+            #      (Phase 5af schema): 信息不足时用户允许 Lawyer 反问澄清.
+            #      若是 → 通过, 不算 tool-first violation.
+            #   2. 否则走 tool-first enforcement (Phase 2d): reject 重定向.
+            # Phase 6g 修复: 之前 BaseAgent 一刀切, 模型纯文本反问会被反复 reject
+            # 直到 max_pre_tool_rejections 用完, 实测真实用户场景下损坏体验.
             if tool_specs and tool_calls_made == 0:
+                # 尝试解析: 是 clarification JSON 吗?
+                schema = self.output_schema()
+                try:
+                    parsed_dict = parse_json_robust(response.text)
+                    parsed = schema.model_validate(parsed_dict)
+                    mode = getattr(parsed, "mode", None)
+                    clarifying_q = getattr(parsed, "clarifying_questions", [])
+                    # clarification 通过条件: mode 字段是 "clarification" 且真有问题列表,
+                    # 不能空数组钻空子;
+                    if mode == "clarification" and clarifying_q:
+                        return AgentOutput(payload=parsed, steps_used=step)
+                except Exception:
+                    pass  # parse 失败, 走 reject 路径
+
                 pre_tool_rejections += 1
                 if pre_tool_rejections > self.max_pre_tool_rejections:
                     from multi_agent.errors import BudgetExceeded
@@ -159,12 +175,14 @@ class BaseAgent(BaseModel, ABC):
                 messages.append(AgentMessage(
                     role="user",
                     content=(
-                        "⚠️ 错误：你跳过了检索步骤，直接给出了答案。"
-                        "你的回答已被丢弃，不会出现在最终结果中。\n"
-                        f"现在必须先调用 {first_tool_name} 工具检索，"
-                        "然后仅根据工具返回的结果撰写答案，"
-                        "禁止使用训练记忆中的任何法条号。\n"
-                        f"请立即调用 {first_tool_name} 工具。"
+                        "⚠️ 错误: 你的回答未通过检验, 已被丢弃.\n"
+                        "你必须在两条路径中选一条:\n"
+                        f"  (A) 信息充足 → 立即调用 {first_tool_name} 工具检索, 然后根据"
+                        "工具返回结果撰写 mode=\"consultation\" 的 JSON.\n"
+                        "  (B) 信息不足 → 输出 mode=\"clarification\" 的 JSON, 字段含"
+                        "clarifying_questions (1-4 个具体澄清问题), citations=[], "
+                        "five_section=null. 不要输出纯文本反问.\n"
+                        "禁止使用训练记忆里的任何法条号. 必须立即在 (A) 或 (B) 中选择."
                     ),
                 ))
                 continue
