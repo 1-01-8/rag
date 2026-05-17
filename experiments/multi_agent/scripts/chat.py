@@ -313,6 +313,36 @@ async def chat_loop(args) -> int:
             if turn > 1:
                 tools_for_lawyer.append(history_search)
 
+            # Phase 6h: 自动从 memory 拉上下文给 Lawyer (前 3 轮 + 累积引用 + 压缩 summary)
+            ctx_recent_turns: list[dict] = []
+            ctx_cited_articles: list[dict] = []
+            ctx_history_summary: str = ""
+            try:
+                # 最近 3 轮原文
+                _recent = store.recent_turns(session_id, n=3)
+                ctx_recent_turns = [
+                    {"question": t.question, "final_answer": t.final_answer}
+                    for t in _recent
+                ]
+                # sticky 里的累积法条 + summary (intent-based 读取省 token)
+                _sticky_cit = store.read_sticky(session_id, intent="recent_citations")
+                if _sticky_cit:
+                    ctx_cited_articles = [
+                        {"law": c.law, "article": c.article}
+                        for c in _sticky_cit.cited_articles
+                    ]
+                _sticky_sum = store.read_sticky(session_id, intent="summary_only")
+                if _sticky_sum:
+                    ctx_history_summary = _sticky_sum.history_summary or ""
+            except Exception:
+                pass  # best-effort: memory 出问题不阻断主流程
+
+            ctx_extra = {
+                "recent_turns": ctx_recent_turns,
+                "cited_articles": ctx_cited_articles,
+                "history_summary": ctx_history_summary,
+            }
+
             try:
                 if args.fast:
                     # Phase 6f 快路径: 先调一次 statute_search 预检索, 注入 evidences,
@@ -344,7 +374,10 @@ async def chat_loop(args) -> int:
                         provider=provider, runs_root=runs_root,
                         session_id=session_id, memory_store=store,
                         turn_indexer=turn_indexer,
-                        agent_input_extra={"prefetched_evidences": prefetched_evs},
+                        agent_input_extra={
+                            "prefetched_evidences": prefetched_evs,
+                            **ctx_extra,  # Phase 6h: 上下文一并注入
+                        },
                     )
                     _print_answer(result, with_supervisor=False)
                 elif args.no_supervisor:
@@ -361,6 +394,7 @@ async def chat_loop(args) -> int:
                         provider=provider, runs_root=runs_root,
                         session_id=session_id, memory_store=store,
                         turn_indexer=turn_indexer,
+                        agent_input_extra=ctx_extra,  # Phase 6h: 多轮上下文
                     )
                     _print_answer(result, with_supervisor=False)
                 else:
@@ -380,6 +414,7 @@ async def chat_loop(args) -> int:
                         ),
                         lawyer_provider=provider, supervisor_provider=provider,
                         runs_root=runs_root,
+                        agent_input_extra=ctx_extra,  # Phase 6h: 多轮上下文
                     )
                     _print_answer(result, with_supervisor=True)
                     # 持久化 turn (run_with_supervisor 没接 memory; 单独写)
