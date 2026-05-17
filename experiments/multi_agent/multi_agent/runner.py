@@ -106,7 +106,7 @@ async def run_query(
 
     # Memory integration: persist Turn and update StickyContext after success.
     if session_id and memory_store is not None and status == "ok":
-        from multi_agent.schemas.memory import StickyContext, Turn
+        from multi_agent.schemas.memory import StickyContext, Turn, CitedArticle
         sticky = memory_store.read_sticky(session_id) or StickyContext(session_id=session_id)
         if run_id not in sticky.linked_runs:
             sticky.linked_runs.append(run_id)
@@ -122,6 +122,44 @@ async def run_query(
             agents_invoked=[agent.name] if agent is not None else [],
         )
         memory_store.append_turn(session_id, turn)
+
+        # Phase 6k: 从 Lawyer 输出 JSON 抽 citations 更新 sticky 累积字段.
+        # 之前 sticky.cited_articles / mentioned_laws / last_law_name 永远空,
+        # Phase 6h 注入上下文给后续 turn 因此失效. 现在补齐.
+        if final_answer:
+            try:
+                import json as _json
+                payload = _json.loads(final_answer)
+                citations = payload.get("citations") or []
+                # 已有 (law, article) 集合, 去重
+                seen = {(c.law, c.article) for c in sticky.cited_articles}
+                for cit in citations:
+                    if not isinstance(cit, dict):
+                        continue
+                    law = (cit.get("law_short") or "").strip()
+                    art = (cit.get("article_no") or "").strip()
+                    if not law or not art:
+                        continue
+                    if (law, art) in seen:
+                        continue
+                    seen.add((law, art))
+                    sticky.cited_articles.append(CitedArticle(
+                        law=law, article=art, from_turn=next_turn_no,
+                    ))
+                # mentioned_laws: 去重保序
+                for cit in citations:
+                    if not isinstance(cit, dict):
+                        continue
+                    law = (cit.get("law_short") or "").strip()
+                    if law and law not in sticky.mentioned_laws:
+                        sticky.mentioned_laws.append(law)
+                # last_law_name: 取本次 citations 的第一条 (Lawyer 通常按重要性排)
+                for cit in citations:
+                    if isinstance(cit, dict) and cit.get("law_short"):
+                        sticky.last_law_name = cit["law_short"]
+                        break
+            except (ValueError, TypeError, KeyError):
+                pass  # final_answer 不是 JSON / 不是 LawyerOutput shape → 跳过
         memory_store.write_sticky(sticky)
 
         # Phase 6e: 索引到 ma_user_history 在后台跑, 不阻塞返回
